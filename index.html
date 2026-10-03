@@ -313,7 +313,9 @@ function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e
 // 로그인 (Firebase 연결 시). FB_MODE가 아니면 예전처럼 이 기기에서만 동작하는 시연 모드
 const ADMIN_EMAIL = "bufsaicamp77@gmail.com";
 const STUDENT_DOMAIN = "student.seat-pwa.app";
-const sidEmail = id => id + "@" + STUDENT_DOMAIN;
+// 비밀번호를 초기화할 때마다 pwgen/{학번}.g가 1씩 늘고 새 계정 이메일은 학번-g@… (g가 0이면 학번@…)
+const sidEmail = (id, g) => (g ? id + "-" + g : id) + "@" + STUDENT_DOMAIN;
+const curGen = sid => FB.getDoc(FB.doc(FB.db, "pwgen", sid)).then(s => s.exists() ? s.data().g || 0 : 0);
 // 온라인이면 Firebase를 기다리고(불러오는 중 표시), 6초 안에 못 불러오면 오프라인 시연으로 전환
 let FB_MODE = navigator.onLine !== false, AUTHED = false, USER = null, LIVE = false;
 setTimeout(() => { if (!window.FB && FB_MODE) { FB_MODE = false; render(); } }, 6000);
@@ -327,7 +329,9 @@ const student = id => S.students.find(s => s.id === id) || { id, name: id, dept:
 const seatOf = (p, id) => Object.keys(S.res[p]).find(k => S.res[p][k] === id) || null;
 const realMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
 // 시험 시각도 실제 시간처럼 흘러감 (설정한 순간부터 경과한 분을 더함)
-const nowMin = () => S.sim ? Math.min(1439, toMin(S.sim) + Math.floor((Date.now() - (S.simAt || Date.now())) / 60000)) : realMin();
+// 로그인한 학생은 예약 시간을 서버가 실제 시각으로 검사하므로 시험 시각을 쓰지 않음
+const useSim = () => S.sim && !isStudentUser();
+const nowMin = () => useSim() ?Math.min(1439, toMin(S.sim) + Math.floor((Date.now() - (S.simAt || Date.now())) / 60000)) : realMin();
 const setSim = v => { S.sim = v; S.simAt = Date.now(); };
 const now = () => hm(nowMin());
 const addLog = (p, m) => S.log[p].push({ t: now(), m });
@@ -377,8 +381,10 @@ function clockBar() {
     const next = PERIODS.find(p => bookState(p.n) === "before");
     msg = next ? `다음 예약: ${plabel(next.n)} ${hm(openAt(next.n))}부터` : "오늘 수업이 모두 끝났습니다";
   }
+  if (isStudentUser()) return `<div class="clock"><span class="now">현재 시각</span><b>${hm(m)}</b><span>${msg}</span></div>`;
   return `<div class="clock"><span class="now">${S.sim ? "시험 시각" : "현재 시각"}</span><b>${hm(m)}</b><span>${msg}</span>
     <label>시각 바꿔 보기 <input type="time" id="simTime" value="${S.sim ? hm(m) : ""}" step="60"></label>
+    ${LIVE && S.sim ? `<span class="sub">학생 예약은 서버가 실제 시각으로 검사합니다</span>` : ""}
     ${S.sim ? `<button class="btn" type="button" data-act="plus" data-min="1">+1분</button><button class="btn" type="button" data-act="plus" data-min="5">+5분</button><button class="btn quiet" type="button" data-act="realTime">실제 시각으로</button>` : ""}</div>`;
 }
 
@@ -700,7 +706,7 @@ function renderAdmin() {
     return `<div class="seat ${who ? "taken" : ""} ${late ? "late" : ""}" style="cursor:default">${late ? `<span class="late-badge">지각</span>` : ""}<span class="code">${seat}</span>${who ? `<span class="nm">${esc(given(student(who).name))}</span>` : ""}</div>`;
   });
   const rows = S.students.map(s => { const st = seatOf(p, s.id), late = (S.notes[p][s.id] || []).includes("지각");
-    return `<tr><td class="mono">${s.id}</td><td>${esc(s.name)}${late ? ' <span class="tag late">지각</span>' : ""}</td><td>${esc(s.dept)}</td><td>${s.consent ? "동의" : '<span style="color:var(--bad)">미동의</span>'}</td><td class="mono">${st || "–"}</td>${LIVE ? `<td><button class="btn quiet" type="button" data-delsid="${s.id}" aria-label="${esc(s.name)} 명단에서 삭제">삭제</button></td>` : ""}</tr>`; }).join("");
+    return `<tr><td class="mono">${s.id}</td><td>${esc(s.name)}${late ? ' <span class="tag late">지각</span>' : ""}</td><td>${esc(s.dept)}</td><td>${s.consent ? "동의" : '<span style="color:var(--bad)">미동의</span>'}</td><td class="mono">${st || "–"}</td>${LIVE ? `<td style="white-space:nowrap"><button class="btn quiet" type="button" data-pwreset="${s.id}" aria-label="${esc(s.name)} 비밀번호 초기화">비번 초기화</button> <button class="btn quiet" type="button" data-delsid="${s.id}" aria-label="${esc(s.name)} 명단에서 삭제">삭제</button></td>` : ""}</tr>`; }).join("");
   const consentN = S.students.filter(s => s.consent).length;
   const summary = PERIODS.map(x => `<tr><td>${plabel(x.n)}</td><td class="mono">${ptime(x.n)}</td><td class="mono">${hm(openAt(x.n))}–${hm(x.start)}</td><td class="mono">${Object.keys(S.res[x.n]).length} / ${ROWS.length * COLS.length}</td></tr>`).join("");
   const isAdmin = USER && USER.isAdmin;
@@ -712,7 +718,7 @@ function renderAdmin() {
       <input id="newDept" placeholder="학과" aria-label="학과" style="width:130px">
       <button class="btn" type="submit">추가</button></form>
     <div class="row"><button class="btn" type="button" data-act="seedRoster">예시 명단 ${NAMES.length}명 등록</button></div>
-    <p class="sub">명단에 있는 학번만 가입할 수 있습니다. 학생이 비밀번호를 잊었거나 다른 사람이 먼저 가입했다면 Firebase 콘솔 → Authentication → 사용자에서 <span class="mono">학번@${STUDENT_DOMAIN}</span> 계정을 삭제한 뒤 다시 가입하게 하세요.</p>
+    <p class="sub">명단에 있는 학번만 가입할 수 있습니다. 학생이 비밀번호를 잊었거나 다른 사람이 먼저 가입했다면 명단에서 <b>비번 초기화</b>를 누르세요. 예전 비밀번호는 바로 쓸 수 없게 되고, 학생은 '가입하기'에서 새 비밀번호를 만들면 됩니다. 예약 기록은 그대로 남습니다.</p>
     ${isAdmin ? `<hr><div><div class="eyebrow">교수 계정</div><h3>교수 추가 (관리자 전용)</h3></div>
     <p class="sub">먼저 Firebase 콘솔 → Authentication에서 교수 이메일 계정을 만든 뒤, 같은 이메일을 여기에 등록하세요.</p>
     <form id="addStaff" class="row"><input id="newStaff" type="email" placeholder="교수 이메일" aria-label="교수 이메일" style="width:220px"><button class="btn" type="submit">등록</button></form>
@@ -887,14 +893,19 @@ function studentReserve(p, seat) {
   if (old) batch.delete(resRef(p, old));
   batch.set(resRef(p, seat), { p, seat, sid });
   batch.set(mineRef(p, sid), { p, seat, sid });
-  return batch.commit().then(() => ({ old }), e => { if (e.code === "permission-denied") return { taken: true }; throw e; });
+  // 거절 이유가 둘: 다른 학생이 먼저 잡았거나, 서버 시각 기준 예약 시간이 아님
+  return batch.commit().then(() => ({ old }), e => {
+    if (e.code !== "permission-denied") throw e;
+    return FB.getDoc(resRef(p, seat)).then(s => s.exists() && s.data().sid !== sid ? { taken: true } : { closed: true });
+  });
 }
 function studentCancel(p) {
   const sid = S.me, old = seatOf(p, sid), batch = FB.writeBatch(FB.db);
   batch.delete(resRef(p, old));
   batch.delete(mineRef(p, sid));
-  return batch.commit().then(() => old);
+  return batch.commit().then(() => old, e => { if (e.code === "permission-denied") e.closed = true; throw e; });
 }
+const CLOSED_MSG = p => `${plabel(p)} 예약 가능 시간이 아닙니다. (서버 시각 기준, 교수님이 예약을 열면 다시 할 수 있어요)`;
 function writeAllPeriods() {
   PERIODS.forEach(({ n }) => { const cur = clone(periodData(n)); known[n] = true; synced[n] = cur; FB.setDoc(pref(n), cur).catch(syncErr); });
   pushRes();
@@ -953,7 +964,8 @@ window.onFirebase = function () {
       try {
         if (email === ADMIN_EMAIL) USER = { uid: u.uid, email, kind: "staff", isAdmin: true };
         else if (email.endsWith("@" + STUDENT_DOMAIN)) {
-          const sid = email.split("@")[0];
+          const sid = email.split("@")[0].split("-")[0];
+          if (email !== sidEmail(sid, await curGen(sid))) { await FB.signOut(FB.auth); AUTHED = true; render(); return authError({ message: "비밀번호가 초기화된 계정입니다. '가입하기'에서 새 비밀번호를 만드세요." }); }
           if ((await FB.getDoc(FB.doc(FB.db, "roster", sid))).exists()) USER = { uid: u.uid, email, kind: "student", sid };
           else { await FB.signOut(FB.auth); AUTHED = true; render(); return authError({ message: "명단에 없는 학번입니다. 교수님께 문의하세요." }); }
         } else if ((await FB.getDoc(FB.doc(FB.db, "staff", email))).exists()) USER = { uid: u.uid, email, kind: "staff", isAdmin: false };
@@ -979,6 +991,16 @@ document.addEventListener("click", e => {
     const b = FB.writeBatch(FB.db);
     b.delete(FB.doc(FB.db, "roster", d.delsid)); b.delete(FB.doc(FB.db, "rosterIds", d.delsid));
     b.commit().catch(syncErr); return;
+  }
+  if (d.pwreset && isStaffUser()) {
+    const s = student(d.pwreset);
+    if (!confirm(`${s.name}(${s.id}) 학생의 비밀번호를 초기화할까요?\n예전 비밀번호로는 더 이상 로그인할 수 없고, 학생이 '가입하기'에서 새 비밀번호를 만들어야 합니다.`)) return;
+    const ref = FB.doc(FB.db, "pwgen", s.id);
+    FB.runTransaction(FB.db, async tx => {
+      const snap = await tx.get(ref);
+      tx.set(ref, { g: (snap.exists() ? snap.data().g || 0 : 0) + 1 });
+    }).then(() => toast(`${s.name} 학생 비밀번호를 초기화했습니다. '가입하기'로 새 비밀번호를 만들라고 안내하세요.`), syncErr);
+    return;
   }
   if (d.delstaff && USER && USER.isAdmin) { FB.deleteDoc(FB.doc(FB.db, "staff", d.delstaff)).catch(syncErr); return; }
   if (d.act === "seedRoster" && isStaffUser()) {
@@ -1034,6 +1056,7 @@ document.addEventListener("click", e => {
     if (LIVE) {
       const seat = S.pick; S.pick = null; render();
       studentReserve(p, seat).then(r => toast(r.taken ? `${seat}은(는) 방금 다른 학생이 예약했습니다. 다른 자리를 골라 주세요.`
+        : r.closed ? CLOSED_MSG(p)
         : r.old && r.old !== seat ? `${plabel(p)}: ${r.old}에서 ${seat}(으)로 변경했습니다.` : `${plabel(p)} ${seat} 좌석을 예약했습니다.`)).catch(syncErr);
       return;
     }
@@ -1046,7 +1069,7 @@ document.addEventListener("click", e => {
   if (act === "cancel") {
     const p = S.period, old = seatOf(p, S.me);
     if (bookState(p) !== "open") { toast(`${plabel(p)} 예약 가능 시간이 아닙니다.`); return render(); }
-    if (LIVE) { studentCancel(p).then(o => toast(`${plabel(p)} ${o} 예약을 취소했습니다.`), syncErr); return; }
+    if (LIVE) { studentCancel(p).then(o => toast(`${plabel(p)} ${o} 예약을 취소했습니다.`), e => e.closed ? toast(CLOSED_MSG(p)) : syncErr(e)); return; }
     delete S.res[p][old]; toast(`${plabel(p)} ${old} 예약을 취소했습니다.`); return render();
   }
   if (act === "fillIn") {
@@ -1134,11 +1157,11 @@ document.addEventListener("submit", e => {
   if (id === "stuLogin" || id === "stuSignup") {
     const sid = $("#auSid").value.trim(), pw = $("#auPw").value;
     if (!/^\d{8}$/.test(sid)) return authError({ message: "학번 8자리를 숫자로 입력하세요." });
-    if (id === "stuLogin") { FB.signInWithEmailAndPassword(FB.auth, sidEmail(sid), pw).catch(authError); return; }
+    if (id === "stuLogin") { curGen(sid).then(g => FB.signInWithEmailAndPassword(FB.auth, sidEmail(sid, g), pw)).catch(authError); return; }
     if (pw.length < 6) return authError({ code: "auth/weak-password" });
     if (pw !== $("#auPw2").value) return authError({ message: "비밀번호 확인이 일치하지 않습니다." });
     FB.getDoc(FB.doc(FB.db, "rosterIds", sid))
-      .then(snap => snap.exists() ? FB.createUserWithEmailAndPassword(FB.auth, sidEmail(sid), pw)
+      .then(snap => snap.exists() ? curGen(sid).then(g => FB.createUserWithEmailAndPassword(FB.auth, sidEmail(sid, g), pw))
         : Promise.reject({ message: "명단에 없는 학번입니다. 학번을 확인하거나 교수님께 문의하세요." }))
       .then(() => { S.authMode = "login"; toast("가입했습니다."); })
       .catch(authError);
