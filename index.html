@@ -1,0 +1,960 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>강의실 좌석 예약·출석</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#5d5e60">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="좌석예약">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: 상단 역할 전환 바 → 기준 시각 바 → 교시 카드 → I423호 좌석도(교탁이 위) + 오른쪽 작업 패널, 좁은 화면에서는 세로로 쌓임 */
+:root {
+  /* 학교 심볼 색: 차콜 그레이 + 옐로 */
+  --bg: #f4f4f2;
+  --surface: #ffffff;
+  --sunk: #ebebe8;
+  --ink: #2a2b2d;
+  --muted: #66676a;
+  --line: #d6d6d2;
+  --accent: #58595b;
+  --accent-soft: #fff3c4;
+  --brand: #ffc20e;
+  --brand-ink: #2a2b2d;
+  --brand-text: #8a6400;
+  --head: #5d5e60;
+  --head-ink: #f2f2f0;
+  --ok: #2e7a4c;
+  --ok-soft: #dcefe2;
+  --bad: #b8402f;
+  --bad-soft: #f7e0db;
+  --warn: #a8700f;
+  --warn-soft: #fbedc9;
+  --late: #7b3fb0;
+  --late-soft: #efe3f8;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --seat: clamp(34px, 8.6vw, 62px);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #18181a; --surface: #222224; --sunk: #2b2b2e; --ink: #ececea; --muted: #a3a4a6; --line: #3a3a3d;
+    --accent: #c9cacc; --accent-soft: #3d3418; --brand: #ffc20e; --brand-ink: #1c1c1e; --brand-text: #ffcf47; --head: #2f3032; --head-ink: #f2f2f0; --ok: #79c795; --ok-soft: #1f3a2a; --bad: #ee8b7b; --bad-soft: #432520;
+    --warn: #e9b955; --warn-soft: #3f321a; --late: #c79bf0; --late-soft: #33243f; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #18181a; --surface: #222224; --sunk: #2b2b2e; --ink: #ececea; --muted: #a3a4a6; --line: #3a3a3d;
+  --accent: #c9cacc; --accent-soft: #3d3418; --brand: #ffc20e; --brand-ink: #1c1c1e; --brand-text: #ffcf47; --head: #2f3032; --head-ink: #f2f2f0; --ok: #79c795; --ok-soft: #1f3a2a; --bad: #ee8b7b; --bad-soft: #432520;
+  --warn: #e9b955; --warn-soft: #3f321a; --late: #c79bf0; --late-soft: #33243f; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3 { margin: 0; line-height: 1.3; text-wrap: balance; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--head); color: var(--head-ink); border-bottom: 4px solid var(--brand); }
+.top-in { max-width: 1180px; margin: 0 auto; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; justify-content: space-between; }
+.brand { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.brand h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; color: var(--brand); }
+.brand span { color: var(--head-ink); opacity: .85; font-size: 13px; }
+.top .seg { background: rgba(0,0,0,.22); }
+.top .seg button { color: var(--head-ink); }
+.top .seg button[aria-pressed="true"] { background: var(--brand); color: var(--brand-ink); }
+.seg { display: inline-flex; flex-wrap: wrap; background: var(--sunk); border-radius: 8px; padding: 3px; gap: 2px; }
+.seg button { border: 0; background: transparent; padding: 6px 14px; border-radius: 6px; font-size: 14px; font-weight: 500; color: var(--muted); }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+
+main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: 20px; }
+.lead { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: end; justify-content: space-between; }
+.lead h2 { font-size: 22px; font-weight: 700; }
+.lead p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+.eyebrow { font-size: 12px; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+
+.clock { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
+.clock b { font-family: var(--font-mono); font-size: 18px; font-weight: 600; }
+.clock .now { color: var(--muted); }
+.clock label { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; margin-left: auto; }
+.clock input { border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 3px 8px; font-family: var(--font-mono); }
+
+.work { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+@media (max-width: 900px) { .work { grid-template-columns: minmax(0, 1fr); } }
+
+.room { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; min-width: 0; }
+.room-head { display: flex; flex-wrap: wrap; gap: 8px 12px; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+.room-head .meta { color: var(--muted); font-size: 13px; }
+.map-scroll { overflow-x: auto; padding-bottom: 4px; }
+.map { display: grid; grid-template-columns: 18px repeat(4, var(--seat)) 22px repeat(4, var(--seat)); gap: 6px; justify-content: center; min-width: max-content; margin: 0 auto; }
+.board { grid-column: 2 / -1; text-align: center; font-size: 12px; letter-spacing: .1em; color: var(--muted); border: 1px solid var(--line); background: var(--sunk); border-radius: 4px; padding: 4px; margin-bottom: 10px; }
+.rowlab { align-self: center; font-family: var(--font-mono); font-size: 12px; color: var(--muted); text-align: center; }
+
+.seat { position: relative; height: calc(var(--seat) * 0.92); border: 1px solid var(--line); background: var(--surface); border-radius: 7px 7px 3px 3px; padding: 3px 2px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; font-size: 11px; line-height: 1.2; overflow: hidden; transition: transform .08s, opacity .15s; }
+.seat:hover { transform: translateY(-1px); }
+.map { user-select: none; -webkit-user-select: none; }
+.seat .code { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted); }
+.seat .nm { font-weight: 600; font-size: 12px; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 2px; }
+.seat.free { background: var(--surface); }
+.seat.taken { background: var(--sunk); color: var(--muted); cursor: not-allowed; }
+.seat.mine { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+.seat.mine .code { color: var(--brand-ink); }
+.seat.pick { box-shadow: 0 0 0 2px var(--accent); }
+.seat.locked.free { cursor: not-allowed; }
+.seat.empty { border-style: dashed; background: transparent; color: var(--muted); }
+.seat.st-in { background: var(--ok-soft); border-color: var(--ok); }
+.seat.st-out { background: var(--bad-soft); border-color: var(--bad); }
+.seat.suspect { box-shadow: 0 0 0 2px var(--warn); }
+.seat.late { border: 2px solid var(--late); padding-top: 12px; }
+.seat .late-badge { position: absolute; top: 0; left: 0; right: 0; background: var(--late); color: var(--surface); font-size: 9.5px; font-weight: 700; letter-spacing: .08em; line-height: 12px; text-align: center; }
+.tag.late { background: var(--late); color: var(--surface); font-weight: 600; }
+.stat.late b { color: var(--late); }
+.openbar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
+.openbar.on { border-color: var(--ok); background: var(--ok-soft); }
+
+.esync { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--brand); border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; font-size: 14px; }
+.esync.off { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; border-left-color: var(--line); color: var(--muted); }
+.esync-head { display: flex; flex-wrap: wrap; gap: 6px 12px; justify-content: space-between; align-items: start; }
+.esync .sub, .alimtalk .sub { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+.esync-row { display: grid; grid-template-columns: 150px 1fr; gap: 6px 12px; align-items: center; border-top: 1px solid var(--line); padding-top: 8px; }
+.esync-k { font-weight: 600; }
+.esync-v { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+@media (max-width: 560px) { .esync-row { grid-template-columns: 1fr; } }
+.pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 9px; border-radius: 999px; background: var(--sunk); color: var(--muted); }
+.pill.live { background: var(--brand); color: var(--brand-ink); }
+.pill.done { background: var(--ok-soft); color: var(--ok); }
+.code-sm { font-size: 18px; letter-spacing: .12em; }
+.codescreen { position: fixed; inset: 0; z-index: 20; background: var(--head); color: var(--head-ink); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 24px; text-align: center; }
+.codescreen .eyebrow { color: var(--brand); font-size: 16px; }
+.codescreen .bigcode { font-size: clamp(72px, 22vw, 200px); font-weight: 600; letter-spacing: .14em; color: var(--brand); line-height: 1; }
+.codescreen p { margin: 0; font-size: 18px; }
+.alimtalk { background: var(--accent-soft); color: var(--ink); border: 1px solid var(--brand); border-radius: 12px; padding: 14px 16px; display: grid; gap: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+.alimtalk .sub, .alimtalk .hint { color: var(--muted); }
+.alimtalk input { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 8px; padding: 9px 12px; width: 100%; max-width: 200px; letter-spacing: .2em; }
+.alimtalk.done { background: var(--ok-soft); color: var(--ink); box-shadow: none; border: 1px solid var(--ok); }
+.dots { display: flex; gap: 3px; margin-top: 1px; }
+.dots i { width: 13px; height: 12px; border-radius: 3px; background: var(--line); color: var(--muted); font-style: normal; font-size: 8.5px; font-weight: 700; line-height: 12px; text-align: center; }
+.dots i.in { background: var(--ok); color: var(--surface); }
+.dots i.out { background: var(--bad); color: var(--surface); }
+.stat b small { font-size: 14px; color: var(--bad); }
+.howto { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; font-size: 14px; }
+.howto dt { font-weight: 600; }
+.howto dd { margin: 0; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); margin-top: 14px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 14px; height: 12px; border-radius: 3px; border: 1px solid var(--line); display: inline-block; }
+.tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--sunk); color: var(--ink); }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: grid; gap: 14px; min-width: 0; }
+.panel h3 { font-size: 17px; }
+.panel .sub { color: var(--muted); font-size: 13px; margin: 0; }
+.panel hr { border: 0; border-top: 1px solid var(--line); margin: 2px 0; width: 100%; }
+.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 8px 14px; font-weight: 500; font-size: 14px; }
+.btn.primary { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); font-weight: 600; }
+.btn.quiet { border-color: transparent; background: transparent; color: var(--muted); padding-inline: 6px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.rounds { display: grid; gap: 8px; }
+.round { display: grid; grid-template-columns: 64px 1fr; gap: 8px; align-items: center; font-size: 14px; }
+.tri { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.tri button { border: 0; background: var(--surface); padding: 5px 10px; font-size: 13px; border-right: 1px solid var(--line); }
+.tri button:last-child { border-right: 0; }
+.tri button[aria-pressed="true"].in { background: var(--ok); color: var(--surface); }
+.tri button[aria-pressed="true"].out { background: var(--bad); color: var(--surface); }
+.tri button[aria-pressed="true"].none { background: var(--sunk); }
+
+.stats { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.stat { background: var(--surface); padding: 10px 14px; }
+.stat b { display: block; font-family: var(--font-mono); font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 12px; color: var(--muted); }
+.stat.warn b { color: var(--warn); }
+.stat.bad b { color: var(--bad); }
+.stat.ok b { color: var(--ok); }
+@media (max-width: 640px) { .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+.periods { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.period { text-align: left; border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 10px 12px; display: grid; gap: 1px; }
+.period[aria-pressed="true"] { border-color: var(--brand); box-shadow: inset 0 0 0 2px var(--brand); background: var(--accent-soft); }
+.period b { font-size: 15px; }
+.period small { color: var(--muted); font-size: 12px; font-family: var(--font-mono); }
+.period .st { font-size: 12.5px; margin-top: 3px; color: var(--muted); }
+.period .st.open { color: var(--ok); font-weight: 600; }
+.period .st.yes { color: var(--brand-text); font-weight: 600; }
+
+.login { max-width: 440px; margin: 24px auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 24px; display: grid; gap: 14px; }
+.login h2 { font-size: 20px; }
+.login p { margin: 0; color: var(--muted); font-size: 14px; }
+.field { display: grid; gap: 6px; }
+.field label { font-size: 13px; font-weight: 600; }
+.field input, select { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 9px 12px; width: 100%; }
+.err { color: var(--bad); font-size: 13px; }
+.hint { font-size: 12.5px; color: var(--muted); }
+.hint button { border: 0; background: none; padding: 0; color: var(--brand-text); text-decoration: underline; font-family: var(--font-mono); font-size: 12.5px; }
+.note { font-size: 13px; color: var(--muted); background: var(--sunk); border-radius: 8px; padding: 10px 12px; margin: 0; }
+.note.warn { background: var(--warn-soft); color: var(--ink); }
+
+.log { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 13px; max-height: 220px; overflow-y: auto; }
+.log li { display: grid; grid-template-columns: 44px 1fr; gap: 8px; }
+.log time { font-family: var(--font-mono); color: var(--muted); }
+
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: .03em; }
+td.mono { font-size: 13px; }
+.tbl { overflow-x: auto; max-height: 420px; overflow-y: auto; }
+
+.foot { color: var(--muted); font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 8px 16px; justify-content: space-between; align-items: center; border-top: 1px solid var(--line); padding-top: 14px; }
+.toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 9px 16px; border-radius: 8px; font-size: 14px; z-index: 10; max-width: calc(100% - 32px); }
+[hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) { .seat { transition: none; } .seat:hover { transform: none; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <div class="brand"><h1>강의실 좌석 예약·출석</h1><span>I423호 좌석 예약 · 출석 확인 시제품</span></div>
+    <div class="seg" role="group" aria-label="사용자 역할">
+      <button type="button" data-role="student">학생</button>
+      <button type="button" data-role="prof">교수</button>
+      <button type="button" data-role="admin">관리자</button>
+    </div>
+  </div>
+</header>
+<main id="app"></main>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const ROOM = "I423호";
+const ROWS = ["A","B","C","D","E","F"];
+const COLS = [1,2,3,4,5,6,7,8];
+const ROUNDS = [["start","시작"],["end","마감"]];
+// 1교시 09:00–09:50 … 10교시 18:00–18:50, 교시마다 10분 쉬는 시간
+const PERIODS = Array.from({ length: 10 }, (_, i) => ({ n: i + 1, start: (9 + i) * 60, end: (9 + i) * 60 + 50 }));
+const OPEN_BEFORE = 30; // 수업 시작 30분 전부터 예약 가능 (1교시 08:30, 2교시 09:30 …)
+
+const NAMES = ["김서연","이도윤","박하은","최준우","정지아","강민준","조수아","윤시우","장예린","임주원","한서준","오채원","서지호","신유나","권현우","황다인","안건우","송가은","류태윤","전하린","홍승민","고나연","문재희","양서진","손도현","배지민","백선우","허윤서","남궁민","노은채"];
+const DEPTS = ["컴퓨터공학과","소프트웨어학과","전자공학과","산업공학과","경영학과"];
+
+const pad = n => String(n).padStart(2, "0");
+const hm = m => pad(Math.floor(m / 60)) + ":" + pad(m % 60);
+const toMin = s => { const [h, m] = s.split(":").map(Number); return h * 60 + m; };
+const period = n => PERIODS[n - 1];
+const plabel = n => `${n}교시`;
+const ptime = n => `${hm(period(n).start)}–${hm(period(n).end)}`;
+const openAt = n => period(n).start - OPEN_BEFORE;
+
+function seedStudents() {
+  return NAMES.map((name, i) => {
+    const year = i === 0 ? "2023" : ["2021","2022","2023","2024"][i % 4];
+    const id = i === 0 ? "20231047" : year + String(1000 + ((i * 137) % 900) + 11).padStart(4, "0");
+    return { id, name, dept: DEPTS[i % DEPTS.length], consent: i !== 27 };
+  });
+}
+function seed() {
+  const students = seedStudents();
+  const ids = students.map(s => s.id);
+  const res = {}, checks = {}, notes = {}, log = {};
+  PERIODS.forEach(p => { res[p.n] = {}; checks[p.n] = { start: {}, end: {} }; notes[p.n] = {}; log[p.n] = []; });
+  const s1 = ["A1","A2","A3","A6","A8","B1","B4","B5","B8","C1","C2","C4","C7","C8","D1","D5","D6","D8","E3","E8","F1","F7"];
+  s1.forEach((seat, i) => { res[2][seat] = ids[i + 1]; });
+  ["A3","B5"].forEach(s => checks[2].start[s] = "out");
+  s1.filter(s => !["A3","B5"].includes(s)).forEach(s => checks[2].start[s] = "in");
+  ["A1","A2","A6","A8","B1","B4","B8","C1","C2","C4"].forEach(s => checks[2].end[s] = "in");
+  checks[2].end["F7"] = "out";
+  checks[2].end["E8"] = "out";
+  notes[2][ids[19]] = ["지각"];
+  notes[2][ids[7]] = ["지각"];
+  log[2] = [
+    { t: "10:02", m: "시작 확인 완료: 착석 20명, 빈자리 2명 (A3, B5)" },
+    { t: "10:08", m: nameOf(students, ids[19]) + " 지각 표시" },
+    { t: "10:11", m: nameOf(students, ids[7]) + " 지각 표시" },
+    { t: "10:45", m: "마감 확인 시작" },
+    { t: "10:46", m: "F7, E8 빈자리 표시 (시작 확인 때는 착석)" }
+  ];
+  // 1교시: 출결 기록 없는 상태 (전자출결 자동 연동 시연용)
+  res[1]["C3"] = ids[0];
+  ["A1","A3","A5","A7","B2","B4","B6","B8","C1","C6","C8","D2","D3","D5","D7","E1","E4","E6","F2","F5"].forEach((seat, i) => res[1][seat] = ids[i + 3]);
+  const s2 = ["A2","A5","B2","B6","C3","C5","C8","D2","D4","E1","E5","E6","F3","F8","D7"];
+  res[5]["B1"] = ids[0];
+  s2.forEach((seat, i) => res[5][seat] = ids[i + 1]);
+  ["A4","A5","B3","C6","D1","D8","E2","E4","F5","B7","C2","A7"].forEach((seat, i) => res[7][seat] = ids[i * 2 + 2]);
+  return { students, res, checks, notes, log, me: "20231047", role: "student", period: null, profPeriod: null, adminPeriod: 2, quick: true, pick: null, profPick: null, sim: "", forceOpen: {}, auto: {}, autoOff: {}, showCode: null };
+}
+function nameOf(students, id) { const s = students.find(x => x.id === id); return s ? s.name : id; }
+
+const TEST_ID = "20231047";
+const DAY = (() => { const d = new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); })();
+const hash01 = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) / 4294967296; };
+const KEY = "seatcheck-i423-v1";
+let S;
+try { S = JSON.parse(localStorage.getItem(KEY)) || seed(); } catch (e) { S = seed(); }
+S.forceOpen = S.forceOpen || {};
+S.auto = S.auto || {};
+S.autoOff = S.autoOff || {};
+function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+
+const $ = s => document.querySelector(s);
+const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const student = id => S.students.find(s => s.id === id);
+const seatOf = (p, id) => Object.keys(S.res[p]).find(k => S.res[p][k] === id) || null;
+const realMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+// 시험 시각도 실제 시간처럼 흘러감 (설정한 순간부터 경과한 분을 더함)
+const nowMin = () => S.sim ? Math.min(1439, toMin(S.sim) + Math.floor((Date.now() - (S.simAt || Date.now())) / 60000)) : realMin();
+const setSim = v => { S.sim = v; S.simAt = Date.now(); };
+const now = () => hm(nowMin());
+const addLog = (p, m) => S.log[p].push({ t: now(), m });
+const given = n => n.length > 2 ? n.slice(-2) : n;
+const roundName = k => ROUNDS.find(r => r[0] === k)[1];
+let toastTimer;
+function toast(m) { const t = $("#toast"); t.textContent = m; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 2200); }
+
+// 예약 창: 수업 시작 30분 전 ~ 수업 시작. 교수가 열어 두면 시간과 관계없이 예약 가능
+const forced = n => !!S.forceOpen[n];
+const bookState = n => forced(n) ? "open" : timeState(n);
+function timeState(n) {
+  const m = nowMin();
+  if (m < openAt(n)) return "before";
+  if (m < period(n).start) return "open";
+  return "closed";
+}
+function currentPeriod() {
+  const m = nowMin();
+  const p = PERIODS.find(p => m >= p.start && m < p.end + 10);
+  return p ? p.n : null;
+}
+function suggestPeriod() {
+  const open = PERIODS.find(p => bookState(p.n) === "open");
+  if (open) return open.n;
+  const next = PERIODS.find(p => bookState(p.n) === "before");
+  return next ? next.n : 10;
+}
+
+function mapShell(cell) {
+  let h = `<div class="map-scroll"><div class="map"><div class="board">교탁 · 칠판</div>`;
+  ROWS.forEach(r => {
+    h += `<div class="rowlab">${r}</div>`;
+    COLS.forEach(c => { h += cell(r + c); if (c === 4) h += `<div aria-hidden="true"></div>`; });
+  });
+  return h + `</div></div>`;
+}
+const allSeats = () => ROWS.flatMap(r => COLS.map(c => r + c));
+
+function clockBar() {
+  const m = nowMin(), cp = currentPeriod();
+  const openP = PERIODS.find(p => bookState(p.n) === "open");
+  let msg;
+  if (openP) msg = forced(openP.n) && timeState(openP.n) !== "open" ? `${plabel(openP.n)} 예약 중 · 교수님이 예약을 열어 둠` : `${plabel(openP.n)} 예약 중 · ${hm(period(openP.n).start)} 마감`;
+  else if (cp && m < period(cp).end) msg = `${plabel(cp)} 수업 중`;
+  else {
+    const next = PERIODS.find(p => bookState(p.n) === "before");
+    msg = next ? `다음 예약: ${plabel(next.n)} ${hm(openAt(next.n))}부터` : "오늘 수업이 모두 끝났습니다";
+  }
+  return `<div class="clock"><span class="now">${S.sim ? "시험 시각" : "현재 시각"}</span><b>${hm(m)}</b><span>${msg}</span>
+    <label>시각 바꿔 보기 <input type="time" id="simTime" value="${S.sim ? hm(m) : ""}" step="60"></label>
+    ${S.sim ? `<button class="btn" type="button" data-act="plus" data-min="1">+1분</button><button class="btn" type="button" data-act="plus" data-min="5">+5분</button><button class="btn quiet" type="button" data-act="realTime">실제 시각으로</button>` : ""}</div>`;
+}
+
+/* ---------- 전자출결 자동 연동 (시연) ----------
+   실제 서비스에서는 학교 전자출결 API에 출결 시작을 요청하고 결과를 받아옵니다.
+   여기서는 정해진 시각에 세션을 열고, 예시 학생들의 코드 입력을 흉내 냅니다. */
+const WIN = 5; // 코드 입력 가능 시간(분)
+const autoAt = (p, k) => k === "start" ? period(p).start : period(p).end; // 1교시: 09:00, 09:50
+const sess = (p, k) => (S.auto[p] || {})[k] || null;
+const live = ss => ss && !ss.closed && nowMin() < ss.t0 + WIN;
+function markDone(p, k, ss, id) {
+  ss.done[id] = true;
+  const seat = seatOf(p, id);
+  if (seat) { if (!S.checks[p][k][seat]) S.checks[p][k][seat] = "in"; }
+  else if (!ss.unseated.includes(id)) ss.unseated.push(id);
+}
+function syncAuto() {
+  const m = nowMin();
+  PERIODS.forEach(({ n: p }) => {
+    if (S.autoOff[p]) return;
+    ROUNDS.forEach(([k, l]) => {
+      const t0 = autoAt(p, k);
+      S.auto[p] = S.auto[p] || {};
+      let ss = S.auto[p][k];
+      if (!ss) {
+        if (m < t0 || m >= t0 + WIN) return;
+        // 코드와 예시 응답은 날짜·교시로 정해지는 값이라, 여러 기기가 동시에 열어도 같은 결과가 됩니다
+        const seedKey = DAY + "|" + p + "|" + k;
+        ss = S.auto[p][k] = { code: String(1000 + Math.floor(hash01(seedKey + "|code") * 9000)), t0, delays: {}, done: {}, unseated: [], closed: false };
+        if (S.demoReplies !== false) S.students.forEach(s => {
+          if (s.id === TEST_ID) return; // 시험용 학생은 직접 입력
+          const r = hash01(seedKey + "|" + s.id);
+          if (seatOf(p, s.id) ? r < 0.88 : r < 0.07) ss.delays[s.id] = Math.floor(hash01(seedKey + "|d|" + s.id) * WIN);
+        });
+        S.log[p].push({ t: hm(t0), m: `${l} 출결 자동 시작 · 수강생 ${S.students.length}명에게 알림톡 발송 · 코드 ${ss.code}` });
+      }
+      if (ss.closed) return;
+      const el = m - ss.t0;
+      Object.entries(ss.delays).forEach(([id, d]) => { if (!ss.done[id] && d <= el) markDone(p, k, ss, id); });
+      if (el >= WIN) {
+        const miss = Object.keys(S.res[p]).filter(seat => !ss.done[S.res[p][seat]] && !S.checks[p][k][seat]);
+        miss.forEach(seat => S.checks[p][k][seat] = "out");
+        ss.closed = true;
+        S.log[p].push({ t: hm(ss.t0 + WIN), m: `${l} 출결 자동 마감: 코드 입력 ${Object.keys(ss.done).length}명, 예약했지만 미입력 ${miss.length}명${miss.length ? " (" + miss.join(", ") + ")" : ""}` });
+        if (S.showCode && S.showCode.p === p && S.showCode.k === k) S.showCode = null;
+      }
+    });
+  });
+}
+function autoBar(p) {
+  if (S.autoOff[p]) return `<div class="esync off"><div><b>전자출결 자동 연동 꺼짐</b> · ${plabel(p)}은 휴강·보강 등으로 자동 출결을 보내지 않습니다.</div><button class="btn" type="button" data-act="autoOn">다시 켜기</button></div>`;
+  const m = nowMin();
+  const rows = ROUNDS.map(([k, l]) => {
+    const ss = sess(p, k), t0 = autoAt(p, k);
+    let st;
+    if (live(ss)) {
+      const seated = Object.keys(S.res[p]).length, inN = Object.keys(S.res[p]).filter(seat => ss.done[S.res[p][seat]]).length;
+      st = `<span class="pill live">진행 중</span> 코드 <b class="mono code-sm">${ss.code}</b> · ${hm(ss.t0 + WIN)}까지 · 예약자 ${inN}/${seated}명 입력
+        <button class="btn primary" type="button" data-act="showCode" data-k="${k}">강의실 화면에 띄우기</button>`;
+    } else if (ss) st = `<span class="pill done">완료</span> 코드 입력 ${Object.keys(ss.done).length}명`;
+    else if (m < t0) st = `<span class="pill">대기</span> ${hm(t0)} 자동 발송`;
+    else st = `<span class="pill">지나감</span> ${hm(t0)} 발송 시간이 지났습니다`;
+    return `<div class="esync-row"><span class="esync-k">${l} 출결 · <span class="mono">${hm(t0)}</span></span><span class="esync-v">${st}</span></div>`;
+  }).join("");
+  const unseated = [...new Set(ROUNDS.flatMap(([k]) => (sess(p, k) || { unseated: [] }).unseated))].filter(id => !seatOf(p, id));
+  return `<div class="esync">
+    <div class="esync-head"><div><b>전자출결 자동 연동</b> <span class="tag">시연</span><div class="sub">교수가 누르지 않아도 정해진 시각에 학교 전자출결이 시작되고, 코드 입력 결과가 좌석도에 자동 반영됩니다. 입력 시간 ${WIN}분.</div></div>
+      <button class="btn quiet" type="button" data-act="autoOff">이 교시 자동 출결 끄기 (휴강)</button></div>
+    ${rows}
+    ${unseated.length ? `<p class="note warn">코드는 입력했지만 좌석 예약이 없는 학생 ${unseated.length}명: ${unseated.map(id => esc(student(id).name)).join(", ")}. 빈 좌석을 눌러 현장 배정하세요.</p>` : ""}
+  </div>`;
+}
+function codeScreen() {
+  const sc = S.showCode;
+  if (!sc) return "";
+  const ss = sess(sc.p, sc.k);
+  if (!live(ss)) { S.showCode = null; return ""; }
+  return `<div class="codescreen" role="dialog" aria-label="출결 코드">
+    <div class="eyebrow">${ROOM} · ${plabel(sc.p)} ${roundName(sc.k)} 출결</div>
+    <div class="bigcode mono">${ss.code}</div>
+    <p>알림톡으로 받은 입력란에 위 코드를 입력하세요 · ${hm(ss.t0 + WIN)}까지</p>
+    <button class="btn" type="button" data-act="hideCode">닫기</button></div>`;
+}
+function studentAlert() {
+  for (const { n: p } of PERIODS) for (const [k, l] of ROUNDS) {
+    const ss = sess(p, k);
+    if (!live(ss)) continue;
+    if (ss.done[S.me]) return `<div class="alimtalk done"><b>알림톡</b> ${plabel(p)} ${l} 출결 코드 입력 완료${seatOf(p, S.me) ? ` · 좌석 ${seatOf(p, S.me)} 착석으로 기록` : " · 좌석 예약이 없어 교수님이 자리를 확인합니다"}</div>`;
+    return `<form class="alimtalk" id="codeForm" data-p="${p}" data-k="${k}">
+      <div><b>알림톡 · 출결 체크</b><div class="sub">${ROOM} ${plabel(p)} ${l} 출결이 시작되었습니다. 강의실 화면의 코드를 ${hm(ss.t0 + WIN)}까지 입력하세요.</div></div>
+      <div class="row" style="flex-wrap:nowrap"><input id="codeIn" class="mono" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="코드 4자리" aria-label="출결 코드"><button class="btn primary" type="submit">입력</button></div>
+      <div class="hint">시연: 교수 탭의 전자출결 연동 칸에 코드가 보입니다.</div></form>`;
+  }
+  return "";
+}
+
+/* ---------- 학생 ---------- */
+function renderStudent() {
+  if (!S.me) {
+    return `<section class="login">
+      <div><div class="eyebrow">학생 본인 확인</div><h2>학번을 입력하세요</h2></div>
+      <p>${ROOM} 교시별 좌석도가 표시됩니다. 실제 서비스에서는 학교 계정 인증을 함께 거칩니다.</p>
+      <form id="loginForm" class="field">
+        <label for="sid">학번</label>
+        <input id="sid" class="mono" inputmode="numeric" autocomplete="off" placeholder="예: 20231047" value="20231047">
+        <div class="err" id="loginErr" hidden></div>
+        <button class="btn primary" type="submit" style="margin-top:6px">좌석 예약하기</button>
+      </form>
+      <div class="hint">시험용 학번: <button type="button" data-fill="20231047">20231047</button> (김서연)</div>
+    </section>`;
+  }
+  const me = student(S.me);
+  if (!S.period) S.period = suggestPeriod();
+  const p = S.period, bs = bookState(p);
+  const mySeat = seatOf(p, S.me);
+  const pick = bs === "open" ? S.pick : null;
+  const cards = PERIODS.map(x => {
+    const ms = seatOf(x.n, S.me), st = bookState(x.n);
+    const stText = ms ? "내 좌석 " + ms : st === "open" ? (forced(x.n) && timeState(x.n) !== "open" ? "예약 가능 · 교수 오픈" : "예약 가능") : st === "before" ? hm(openAt(x.n)) + " 오픈" : "예약 마감";
+    return `<button class="period" type="button" data-period="${x.n}" aria-pressed="${x.n === p}">
+      <b>${plabel(x.n)}</b><small>${ptime(x.n)}</small>
+      <span class="st ${ms ? "yes" : st === "open" ? "open" : ""}">${stText}</span></button>`;
+  }).join("");
+  const map = mapShell(seat => {
+    const who = S.res[p][seat];
+    const st = who === S.me ? "mine" : who ? "taken" : "free";
+    const label = `${seat} ${st === "mine" ? "내 좌석" : st === "taken" ? "예약됨" : bs === "open" ? "예약 가능" : "빈 좌석"}`;
+    return `<button type="button" class="seat ${st} ${bs !== "open" ? "locked" : ""} ${pick === seat ? "pick" : ""}" data-sseat="${seat}" aria-label="${label}" ${st === "taken" || bs !== "open" ? "aria-disabled=\"true\"" : ""}>
+      <span class="code">${seat}</span>${st === "mine" ? `<span class="nm">내 자리</span>` : st === "taken" ? `<span class="nm">예약</span>` : ""}</button>`;
+  });
+  const freeCount = allSeats().filter(s => !S.res[p][s]).length;
+  const windowText = `${plabel(p)} 예약은 ${hm(openAt(p))}부터 ${hm(period(p).start)}까지 가능합니다.`;
+  let panel;
+  if (bs !== "open") {
+    panel = `<div><div class="eyebrow">${plabel(p)} · ${ptime(p)}</div><h3>${bs === "before" ? hm(openAt(p)) + "부터 예약할 수 있습니다" : "예약이 마감되었습니다"}</h3></div>
+      ${mySeat ? `<p class="sub">내 좌석: <b class="mono">${mySeat}</b></p>` : ""}
+      <p class="note">${windowText}</p>
+      ${bs === "closed" ? `<p class="sub">교수님이 예약을 다시 열면 이 화면에서 바로 예약할 수 있습니다. 아니면 수업 시간에 교수님이 현장에서 자리를 배정합니다.</p>` : ""}`;
+  } else if (pick && pick !== mySeat && !S.res[p][pick]) {
+    panel = `<div><div class="eyebrow">${plabel(p)} · 선택한 좌석</div><h3 class="mono" style="font-size:22px">${pick}</h3></div>
+      <p class="sub">${mySeat ? `지금 좌석 ${mySeat}에서 ${pick}(으)로 바꿉니다.` : `이 자리를 ${plabel(p)} 좌석으로 예약합니다.`}</p>
+      <div class="row"><button class="btn primary" type="button" data-act="reserve">${mySeat ? "이 자리로 변경" : "이 자리 예약"}</button><button class="btn quiet" type="button" data-act="unpick">선택 해제</button></div>`;
+  } else if (mySeat) {
+    panel = `<div><div class="eyebrow">${plabel(p)} · 내 좌석</div><h3 class="mono" style="font-size:22px">${mySeat}</h3></div>
+      <p class="note">좌석 예약은 출석이 아닙니다. 수업 중 교수님이 좌석도에서 실제 착석을 확인합니다.</p>
+      <p class="sub">다른 빈자리를 누르면 좌석을 바꿀 수 있습니다. 변경과 취소는 ${forced(p) ? "교수님이 예약을 닫기 전까지" : hm(period(p).start) + " 수업 시작 전까지"} 가능합니다.</p>
+      <div class="row"><button class="btn" type="button" data-act="cancel">예약 취소</button></div>`;
+  } else {
+    panel = `<div><div class="eyebrow">${plabel(p)} · 좌석 선택</div><h3>원하는 빈자리를 누르세요</h3></div>
+      <p class="sub">예약 가능 ${freeCount}석. ${forced(p) ? "교수님이 예약을 열어 두었습니다." : hm(period(p).start) + " 수업 시작 전까지 예약할 수 있습니다."}</p>
+      <p class="note">스마트폰 사용이 어렵거나 예약을 놓쳤다면 수업 시간에 교수님이 현장에서 자리를 배정합니다.</p>`;
+  }
+  return studentAlert() + `<div class="lead"><div><div class="eyebrow mono">${S.me} · ${esc(me.dept)}</div><h2>${esc(me.name)}님, 교시를 고르세요</h2></div>
+      <button class="btn quiet" type="button" data-act="logout">다른 학번으로 확인</button></div>
+    <div class="periods">${cards}</div>
+    <div class="work">
+      <section class="room">
+        <div class="room-head"><div><h3 style="font-size:16px">${ROOM} 좌석도</h3><div class="meta">${plabel(p)} · ${ptime(p)} · 예약 ${hm(openAt(p))}–${hm(period(p).start)}</div></div></div>
+        ${map}
+        <div class="legend"><span><i class="sw"></i>빈 좌석</span><span><i class="sw" style="background:var(--sunk)"></i>예약됨</span><span><i class="sw" style="background:var(--brand);border-color:var(--brand)"></i>내 자리</span></div>
+      </section>
+      <aside class="panel">${panel}</aside>
+    </div>`;
+}
+
+/* ---------- 교수 ---------- */
+function statusOf(p, round, seat) { return S.checks[p][round][seat] || null; }
+function isSuspect(p, seat) {
+  const ch = S.checks[p];
+  return ch.start[seat] === "in" && ch.end[seat] === "out";
+}
+function periodSelect(id, cur) {
+  return `<select id="${id}" aria-label="교시 선택" style="width:auto">${PERIODS.map(x => `<option value="${x.n}" ${x.n === cur ? "selected" : ""}>${plabel(x.n)} (${ptime(x.n)}) · 예약 ${Object.keys(S.res[x.n]).length}명</option>`).join("")}</select>`;
+}
+function openBar(p) {
+  const ts = timeState(p);
+  if (forced(p)) return `<div class="openbar on"><span><b>${plabel(p)} 학생 예약을 열어 두었습니다.</b> 닫기 전까지 학생이 좌석을 예약하거나 바꿀 수 있습니다.</span><button class="btn" type="button" data-act="closeBook">예약 닫기</button></div>`;
+  if (ts === "open") return `<div class="openbar"><span>지금은 ${plabel(p)} 예약 시간입니다 (${hm(openAt(p))}–${hm(period(p).start)}).</span></div>`;
+  return `<div class="openbar"><span>${plabel(p)} 학생 예약 ${ts === "closed" ? "마감" : "전"} · 기본 예약 시간 ${hm(openAt(p))}–${hm(period(p).start)}</span><button class="btn primary" type="button" data-act="openBook">학생 예약 열기</button></div>`;
+}
+// 일괄 착석 대상: 시작 확인이 덜 끝났으면 시작, 아니면 마감
+function fillRound(p) {
+  const seats = Object.keys(S.res[p]);
+  if (seats.some(s => !statusOf(p, "start", s))) return "start";
+  if (seats.some(s => !statusOf(p, "end", s))) return "end";
+  return null;
+}
+// 클릭(착석)·우클릭(빈자리): 시작 기록 → 마감 기록 → 초기화
+function cycleCheck(p, seat, v) {
+  const ch = S.checks[p], n = student(S.res[p][seat]).name, word = v === "in" ? "착석" : "빈자리";
+  if (!ch.start[seat]) { ch.start[seat] = v; addLog(p, `${seat} ${n}: 시작 확인 ${word}`); }
+  else if (!ch.end[seat]) { ch.end[seat] = v; addLog(p, `${seat} ${n}: 마감 확인 ${word}`); }
+  else { delete ch.start[seat]; delete ch.end[seat]; addLog(p, `${seat} ${n}: 확인 기록 초기화`); }
+}
+function toggleNote(p, id, note) {
+  const arr = S.notes[p][id] || [], on = !arr.includes(note);
+  S.notes[p][id] = on ? [...arr, note] : arr.filter(x => x !== note);
+  addLog(p, `${student(id).name}: ${note} ${on ? "표시" : "해제"}`);
+  toast(`${student(id).name}: ${note} ${on ? "표시" : "해제"}`);
+}
+function renderProf() {
+  if (!S.profPeriod) S.profPeriod = currentPeriod() || 2;
+  const p = S.profPeriod, res = S.res[p];
+  const seats = Object.keys(res);
+  const cnt = (k, v) => seats.filter(s => statusOf(p, k, s) === v).length;
+  const fr = fillRound(p);
+  const unN = fr ? seats.filter(s => !statusOf(p, fr, s)).length : 0;
+  const susp = seats.filter(s => isSuspect(p, s));
+  const isLate = id => (S.notes[p][id] || []).includes("지각");
+  const lateSeats = seats.filter(s => isLate(res[s]));
+  const noSeat = S.students.map(s => s.id).filter(id => !seatOf(p, id));
+  const map = mapShell(seat => {
+    const who = res[seat];
+    if (!who) return `<button type="button" class="seat empty ${S.profPick === seat ? "pick" : ""}" data-pseat="${seat}" aria-label="${seat} 빈 좌석"><span class="code">${seat}</span></button>`;
+    const st = statusOf(p, "end", seat) || statusOf(p, "start", seat);
+    const n = student(who).name;
+    const word = v => v === "in" ? "착석" : v === "out" ? "빈자리" : "미확인";
+    const dots = ROUNDS.map(([k, l]) => `<i class="${statusOf(p, k, seat) || ""}">${l[0]}</i>`).join("");
+    const late = isLate(who);
+    return `<button type="button" class="seat ${st ? "st-" + st : ""} ${isSuspect(p, seat) ? "suspect" : ""} ${late ? "late" : ""} ${S.profPick === seat ? "pick" : ""}" data-pseat="${seat}" aria-label="${seat} ${n} 시작 ${word(statusOf(p, "start", seat))}, 마감 ${word(statusOf(p, "end", seat))}${late ? ", 지각" : ""}">
+      ${late ? `<span class="late-badge">지각</span>` : ""}<span class="nm">${esc(given(n))}</span><span class="dots">${dots}</span></button>`;
+  });
+  let panel;
+  const pk = S.profPick;
+  if (pk && res[pk]) {
+    const s = student(res[pk]);
+    const nt = S.notes[p][s.id] || [];
+    const empties = allSeats().filter(x => !res[x]);
+    panel = `<div><div class="eyebrow mono">${pk} · ${s.id}</div><h3>${esc(s.name)}</h3><p class="sub">${esc(s.dept)}</p></div>
+      ${nt.length ? `<div class="row">${nt.map(x => x === "지각" ? `<span class="tag late">지각</span>` : `<span class="tag" style="background:var(--warn-soft)">${esc(x)}</span>`).join(" ")}</div>` : ""}
+      ${isSuspect(p, pk) ? `<p class="note warn">시작 확인 때는 착석, 이후 확인에서 빈자리입니다. 중도 이탈인지 확인이 필요합니다.</p>` : ""}
+      <div class="rounds">${ROUNDS.map(([k, l]) => {
+        const v = statusOf(p, k, pk);
+        return `<div class="round"><span>${l} 확인</span><span class="tri" role="group" aria-label="${l} 확인">
+          <button type="button" class="in" data-set="${k}:in" aria-pressed="${v === "in"}">착석</button>
+          <button type="button" class="out" data-set="${k}:out" aria-pressed="${v === "out"}">빈자리</button>
+          <button type="button" class="none" data-set="${k}:" aria-pressed="${!v}">미확인</button></span></div>`;
+      }).join("")}</div>
+      <hr>
+      <div class="eyebrow">예외 처리</div>
+      <div class="row">
+        <button class="btn" type="button" data-note="지각" aria-pressed="${nt.includes("지각")}">${nt.includes("지각") ? "지각 표시 해제" : "지각 표시"}</button>      </div>
+      <div class="field"><label for="moveTo">자리 이동</label>
+        <div class="row" style="flex-wrap:nowrap"><select id="moveTo">${empties.map(x => `<option>${x}</option>`).join("")}</select><button class="btn" type="button" data-act="move">이동</button></div></div>
+      <button class="btn quiet" type="button" data-act="unassign" style="justify-self:start">좌석 배정 해제</button>`;
+  } else if (pk) {
+    panel = `<div><div class="eyebrow mono">${pk}</div><h3>빈 좌석 · 현장 배정</h3></div>
+      ${noSeat.length ? `<div class="field"><label for="assignWho">이 교시 좌석 미예약 학생 ${noSeat.length}명</label>
+        <select id="assignWho">${noSeat.map(id => `<option value="${id}">${esc(student(id).name)} · ${id}</option>`).join("")}</select></div>
+        <p class="sub">배정하면 이 좌석에 앉은 것으로 시작 확인이 기록됩니다.</p>
+        <button class="btn primary" type="button" data-act="assign" style="justify-self:start">이 자리에 배정</button>` : `<p class="sub">좌석이 없는 학생이 없습니다.</p>`}`;
+  } else {
+    panel = `<div><div class="eyebrow">사용 방법</div><h3>${S.quick ? "클릭으로 출석 체크" : "좌석을 눌러 자세히 보기"}</h3></div>
+      ${S.quick ? `<dl class="howto"><dt>클릭</dt><dd>시작 착석 → 마감 착석 → 초기화</dd><dt>우클릭</dt><dd>시작 빈자리 → 마감 빈자리 → 초기화</dd><dt>Shift+클릭</dt><dd>지각 표시 / 해제</dd></dl>
+      <p class="sub">섞어서 써도 됩니다. 예를 들어 클릭 후 우클릭하면 시작 착석, 마감 빈자리가 됩니다. 휴대폰에서는 길게 누르면 우클릭으로 동작합니다.</p>` : `<p class="sub">좌석을 누르면 학생 정보, 시작·마감 기록, 지각 표시, 자리 이동 메뉴가 열립니다. 빈 좌석을 누르면 현장 배정을 할 수 있습니다.</p>`}
+      <p class="sub">좌석 아래 '시'·'마'는 시작 · 마감 확인 결과입니다. 주황 테두리는 중도 이탈 확인이 필요한 학생, 보라색 '지각' 띠는 지각한 학생입니다.</p>
+      ${lateSeats.length ? `<div class="field"><span class="eyebrow">지각 ${lateSeats.length}명</span><div class="row">${lateSeats.map(s => `<span class="tag late">${s} ${esc(student(res[s]).name)}</span>`).join(" ")}</div></div>` : ""}`;
+  }
+  const logHtml = S.log[p].filter(l => l.m).slice().reverse().map(l => `<li><time>${l.t}</time><span>${esc(l.m)}</span></li>`).join("") || `<li><time></time><span class="sub">아직 기록이 없습니다.</span></li>`;
+  return `<div class="lead"><div><div class="eyebrow">교수 · 수업 중 출석 확인</div><h2>${ROOM} · ${plabel(p)}</h2><p>${ptime(p)} · 좌석 예약 ${seats.length}명</p></div>
+      ${periodSelect("profPeriod", p)}</div>
+    <div class="stats">
+      <div class="stat"><b>${seats.length}</b><span>좌석 예약</span></div>
+      <div class="stat ok"><b>${cnt("start", "in")}<small> / ${cnt("start", "out")}</small></b><span>시작 착석 / 빈자리</span></div>
+      <div class="stat ok"><b>${cnt("end", "in")}<small> / ${cnt("end", "out")}</small></b><span>마감 착석 / 빈자리</span></div>
+      <div class="stat"><b>${unN}</b><span>${fr ? roundName(fr) + " 미확인" : "미확인"}</span></div>
+      <div class="stat late"><b>${lateSeats.length}</b><span>지각</span></div>
+      <div class="stat warn"><b>${susp.length}</b><span>중도 이탈 확인 필요</span></div>
+    </div>
+    ${autoBar(p)}
+    ${openBar(p)}
+    <div class="work">
+      <section class="room">
+        <div class="room-head">
+          <div class="meta">${S.quick ? "클릭: 시작 착석 → 마감 착석 → 초기화 · 우클릭: 시작 빈자리 → 마감 빈자리 → 초기화 · Shift+클릭: 지각" : "좌석을 누르면 오른쪽에 자세한 정보가 열립니다. Shift+클릭: 지각"}</div>
+          <div class="seg" role="group" aria-label="누르기 동작"><button type="button" data-quick="1" aria-pressed="${S.quick}">출석 체크</button><button type="button" data-quick="0" aria-pressed="${!S.quick}">상세 보기</button></div>
+        </div>
+        ${map}
+        <div class="legend"><span><i class="sw" style="background:var(--ok-soft);border-color:var(--ok)"></i>착석</span><span><i class="sw" style="background:var(--bad-soft);border-color:var(--bad)"></i>빈자리</span><span><i class="sw"></i>미확인</span><span><i class="sw" style="border:2px solid var(--late);background:var(--late)"></i>지각</span><span><i class="sw" style="box-shadow:0 0 0 2px var(--warn)"></i>중도 이탈 확인 필요</span><span><i class="sw" style="border-style:dashed;background:transparent"></i>예약 없음</span></div>
+        <div class="row" style="margin-top:14px">
+          ${ROUNDS.map(([k, l]) => { const n = seats.filter(s => !statusOf(p, k, s)).length;
+            return `<button class="btn primary" type="button" data-act="fillIn" data-k="${k}" ${n ? "" : "disabled"}>${l} 확인: 미확인 ${n}명 모두 착석</button>`; }).join("")}
+          <button class="btn" type="button" data-act="clearRound">출석 확인 전부 다시 하기</button>
+        </div>
+      </section>
+      <aside class="panel">${panel}<hr><div class="eyebrow">수업 기록</div><ul class="log">${logHtml}</ul>
+        <p class="sub">최종 출석 처리는 교수 확인과 학교 출석 기준을 따릅니다.</p></aside>
+    </div>`;
+}
+
+/* ---------- 관리자 ---------- */
+function renderAdmin() {
+  const p = S.adminPeriod;
+  const map = mapShell(seat => {
+    const who = S.res[p][seat];
+    const late = who && (S.notes[p][who] || []).includes("지각");
+    return `<div class="seat ${who ? "taken" : ""} ${late ? "late" : ""}" style="cursor:default">${late ? `<span class="late-badge">지각</span>` : ""}<span class="code">${seat}</span>${who ? `<span class="nm">${esc(given(student(who).name))}</span>` : ""}</div>`;
+  });
+  const rows = S.students.map(s => { const st = seatOf(p, s.id), late = (S.notes[p][s.id] || []).includes("지각");
+    return `<tr><td class="mono">${s.id}</td><td>${esc(s.name)}${late ? ' <span class="tag late">지각</span>' : ""}</td><td>${esc(s.dept)}</td><td>${s.consent ? "동의" : '<span style="color:var(--bad)">미동의</span>'}</td><td class="mono">${st || "–"}</td></tr>`; }).join("");
+  const consentN = S.students.filter(s => s.consent).length;
+  const summary = PERIODS.map(x => `<tr><td>${plabel(x.n)}</td><td class="mono">${ptime(x.n)}</td><td class="mono">${hm(openAt(x.n))}–${hm(x.start)}</td><td class="mono">${Object.keys(S.res[x.n]).length} / ${ROWS.length * COLS.length}</td></tr>`).join("");
+  return `<div class="lead"><div><div class="eyebrow">관리자 · 강의실과 명단 관리</div><h2>${ROOM}</h2><p>좌석 ${ROWS.length * COLS.length}석 (${ROWS.length}열 × ${COLS.length}석) · 하루 10교시</p></div>
+      ${periodSelect("adminPeriod", p)}</div>
+    <div class="work">
+      <section class="room">
+        <div class="room-head"><div><h3 style="font-size:16px">${plabel(p)} 예약 현황</h3><div class="meta">${ptime(p)} · 예약 ${hm(openAt(p))}–${hm(period(p).start)}</div></div></div>
+        ${map}
+        <div class="tbl" style="margin-top:18px"><table><thead><tr><th>교시</th><th>수업 시간</th><th>예약 가능 시간</th><th>예약</th></tr></thead><tbody>${summary}</tbody></table></div>
+      </section>
+      <aside class="panel">
+        <div><div class="eyebrow">학생 명단</div><h3>${S.students.length}명 · 시험 운영 동의 ${consentN}명</h3></div>
+        <p class="note">초기 시제품은 동의한 학생 명단만 등록해 시험 운영합니다. 오른쪽 열은 ${plabel(p)} 좌석입니다.</p>
+        ${LIVE ? `<hr><div><div class="eyebrow">공용 데이터 (${DAY})</div><h3>실시간 저장소 관리</h3></div>
+        <div class="row"><button class="btn" type="button" data-act="demoToggle" aria-pressed="${S.demoReplies !== false}">예시 학생 자동 응답: ${S.demoReplies !== false ? "켜짐" : "꺼짐"}</button></div>
+        <p class="sub">켜 두면 전자출결 시연 때 예시 학생들이 코드를 입력한 것처럼 기록됩니다. 실제 시험 운영 때는 꺼 주세요.</p>
+        <div class="row"><button class="btn" type="button" data-act="reset">오늘 데이터를 예시로 채우기</button><button class="btn" type="button" data-act="wipe">오늘 데이터 모두 비우기</button></div>` : ""}
+        <div class="tbl"><table><thead><tr><th>학번</th><th>이름</th><th>학과</th><th>동의</th><th>좌석</th></tr></thead><tbody>${rows}</tbody></table></div>
+      </aside>
+    </div>`;
+}
+
+function render() {
+  document.querySelectorAll("[data-role]").forEach(b => b.setAttribute("aria-pressed", b.dataset.role === S.role));
+  syncAuto();
+  const body = S.role === "student" ? renderStudent() : S.role === "prof" ? renderProf() : renderAdmin();
+  const foot = LIVE
+    ? `<span><span class="pill done">실시간 연결됨</span> ${DAY} 기록을 모든 기기가 함께 봅니다. 이름과 학번은 가상의 값입니다.</span>`
+    : `<span>${window.FB ? "실시간 저장소에 연결하는 중… " : "오프라인: "}변경 내용은 이 기기에만 저장됩니다. 이름과 학번은 가상의 값입니다.</span><button class="btn quiet" type="button" data-act="reset">예시 데이터로 되돌리기</button>`;
+  $("#app").innerHTML = clockBar() + body + `<div class="foot">${foot}</div>` + (S.role === "prof" ? codeScreen() : "");
+  save();
+  pushChanges();
+}
+
+/* ---------- Firebase 실시간 저장 ----------
+   days/{날짜}/periods/{교시} 문서 하나에 그 교시의 예약·출석·기록을 담습니다.
+   화면은 지금처럼 S를 고치고 render()하면, 바뀐 부분만 골라 저장소에 보냅니다. */
+let LIVE = false;
+const known = {}, synced = {};
+const clone = o => JSON.parse(JSON.stringify(o));
+const emptyPeriod = () => ({ res: {}, checks: { start: {}, end: {} }, notes: {}, log: [], forceOpen: false, autoOff: false, auto: {} });
+const pref = n => FB.doc(FB.db, "days", DAY, "periods", String(n));
+const periodData = n => ({ res: S.res[n], checks: S.checks[n], notes: S.notes[n], log: S.log[n], forceOpen: !!S.forceOpen[n], autoOff: !!S.autoOff[n], auto: S.auto[n] || {} });
+function syncErr(e) { console.error(e); toast("저장소 오류: " + (e && (e.code || e.message) || e)); }
+function flat(o, pre, out) {
+  for (const [k, v] of Object.entries(o || {})) {
+    const path = pre ? pre + "." + k : k;
+    if (v && typeof v === "object" && !Array.isArray(v)) flat(v, path, out); else out[path] = v;
+  }
+  return out;
+}
+function applyPeriod(n, d) {
+  S.res[n] = d.res || {};
+  S.checks[n] = { start: (d.checks || {}).start || {}, end: (d.checks || {}).end || {} };
+  S.notes[n] = d.notes || {};
+  S.log[n] = d.log || [];
+  if (d.forceOpen) S.forceOpen[n] = true; else delete S.forceOpen[n];
+  if (d.autoOff) S.autoOff[n] = true; else delete S.autoOff[n];
+  S.auto[n] = d.auto || {};
+  synced[n] = clone(periodData(n));
+}
+function pushChanges() {
+  if (!LIVE) return;
+  PERIODS.forEach(({ n }) => {
+    const cur = clone(periodData(n));
+    if (!known[n]) {
+      if (JSON.stringify(cur) === JSON.stringify(emptyPeriod())) return;
+      known[n] = true; synced[n] = cur;
+      FB.setDoc(pref(n), cur).catch(syncErr);
+      return;
+    }
+    const prev = synced[n] || emptyPeriod();
+    const a = flat({ ...prev, log: null }, "", {}), b = flat({ ...cur, log: null }, "", {});
+    const up = {};
+    for (const k in b) if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) up[k] = b[k];
+    for (const k in a) if (!(k in b)) up[k] = FB.deleteField();
+    const seen = new Set((prev.log || []).map(x => JSON.stringify(x)));
+    const added = (cur.log || []).filter(x => !seen.has(JSON.stringify(x)));
+    if (added.length) up.log = FB.arrayUnion(...added);
+    if (!Object.keys(up).length) return;
+    synced[n] = cur;
+    FB.updateDoc(pref(n), up).catch(syncErr);
+  });
+}
+// 좌석 예약은 두 학생이 동시에 같은 자리를 누를 수 있어 트랜잭션으로 확인 후 저장
+function fbReserve(n, seat, me) {
+  return FB.runTransaction(FB.db, async tx => {
+    const ref = pref(n), snap = await tx.get(ref);
+    const d = snap.exists() ? snap.data() : emptyPeriod();
+    const res = d.res || {};
+    if (res[seat] && res[seat] !== me) return { taken: true };
+    const old = Object.keys(res).find(k => res[k] === me) || null;
+    if (!snap.exists()) tx.set(ref, { ...emptyPeriod(), res: { [seat]: me } });
+    else {
+      const up = { ["res." + seat]: me };
+      if (old && old !== seat) up["res." + old] = FB.deleteField();
+      tx.update(ref, up);
+    }
+    return { old };
+  });
+}
+function writeAllPeriods() {
+  PERIODS.forEach(({ n }) => { const cur = clone(periodData(n)); known[n] = true; synced[n] = cur; FB.setDoc(pref(n), cur).catch(syncErr); });
+}
+window.startSync = function () {
+  FB.onSnapshot(FB.collection(FB.db, "days", DAY, "periods"), snap => {
+    if (!LIVE) { LIVE = true; PERIODS.forEach(({ n }) => applyPeriod(n, emptyPeriod())); }
+    snap.docChanges().forEach(ch => {
+      const n = +ch.doc.id;
+      if (!period(n)) return;
+      if (ch.type === "removed") { known[n] = false; applyPeriod(n, emptyPeriod()); }
+      else { known[n] = true; applyPeriod(n, ch.doc.data()); }
+    });
+    if (!document.querySelector("input:focus, select:focus")) render();
+  }, err => { syncErr(err); });
+  FB.onSnapshot(FB.doc(FB.db, "config", "main"), d => {
+    S.demoReplies = d.exists() ? d.data().demoReplies !== false : true;
+    if (LIVE) render();
+  }, () => {});
+};
+
+document.addEventListener("click", e => {
+  const el = e.target.closest("button");
+  if (!el) return;
+  const d = el.dataset;
+  if (d.role) { S.role = d.role; S.pick = null; S.profPick = null; return render(); }
+  if (d.fill) { $("#sid").value = d.fill; return; }
+  if (d.period) { S.period = +d.period; S.pick = null; return render(); }
+  if (d.sseat) {
+    const p = S.period, bs = bookState(p), who = S.res[p][d.sseat];
+    if (bs === "before") return toast(`${plabel(p)} 예약은 ${hm(openAt(p))}부터 가능합니다.`);
+    if (bs === "closed") return toast(`${plabel(p)} 예약은 마감되었습니다.`);
+    if (who && who !== S.me) return toast(`${d.sseat}은(는) 이미 예약된 자리입니다.`);
+    S.pick = who === S.me ? null : d.sseat; return render();
+  }
+  if (d.quick) { S.quick = d.quick === "1"; S.profPick = null; return render(); }
+  if (d.pseat) {
+    const p = S.profPeriod, seat = d.pseat;
+    if (e.shiftKey && S.res[p][seat]) { toggleNote(p, S.res[p][seat], "지각"); return render(); }
+    if (S.quick && S.res[p][seat]) { cycleCheck(p, seat, "in"); S.profPick = null; return render(); }
+    S.profPick = S.profPick === seat ? null : seat; return render();
+  }
+  if (d.set) {
+    const [k, v] = d.set.split(":"), p = S.profPeriod, seat = S.profPick;
+    if (v) S.checks[p][k][seat] = v; else delete S.checks[p][k][seat];
+    addLog(p, `${seat} ${student(S.res[p][seat]).name}: ${roundName(k)} 확인 ${v === "in" ? "착석" : v === "out" ? "빈자리" : "미확인으로 되돌림"}`);
+    return render();
+  }
+  if (d.note) {
+    toggleNote(S.profPeriod, S.res[S.profPeriod][S.profPick], d.note);
+    return render();
+  }
+  const act = d.act;
+  if (!act) return;
+  if (act === "openBook") { const p = S.profPeriod; S.forceOpen[p] = true; addLog(p, "학생 좌석 예약을 열었습니다"); toast(`${plabel(p)} 학생 예약을 열었습니다.`); return render(); }
+  if (act === "closeBook") { const p = S.profPeriod; delete S.forceOpen[p]; addLog(p, "학생 좌석 예약을 닫았습니다"); toast(`${plabel(p)} 학생 예약을 닫았습니다.`); return render(); }
+  if (act === "realTime") { S.sim = ""; S.pick = null; return render(); }
+  if (act === "plus") { setSim(hm(Math.min(1439, nowMin() + +d.min))); return render(); }
+  if (act === "showCode") { S.showCode = { p: S.profPeriod, k: d.k }; return render(); }
+  if (act === "hideCode") { S.showCode = null; return render(); }
+  if (act === "autoOff") { const p = S.profPeriod; S.autoOff[p] = true; addLog(p, "전자출결 자동 연동 끔 (휴강)"); return render(); }
+  if (act === "autoOn") { const p = S.profPeriod; delete S.autoOff[p]; addLog(p, "전자출결 자동 연동 다시 켬"); return render(); }
+  if (act === "logout") { S.me = null; S.pick = null; return render(); }
+  if (act === "unpick") { S.pick = null; return render(); }
+  if (act === "reserve") {
+    const p = S.period;
+    if (bookState(p) !== "open") { S.pick = null; toast(`${plabel(p)} 예약 가능 시간이 아닙니다.`); return render(); }
+    if (LIVE) {
+      const seat = S.pick; S.pick = null; render();
+      fbReserve(p, seat, S.me).then(r => toast(r.taken ? `${seat}은(는) 방금 다른 학생이 예약했습니다. 다른 자리를 골라 주세요.`
+        : r.old && r.old !== seat ? `${plabel(p)}: ${r.old}에서 ${seat}(으)로 변경했습니다.` : `${plabel(p)} ${seat} 좌석을 예약했습니다.`)).catch(syncErr);
+      return;
+    }
+    const old = seatOf(p, S.me);
+    if (old) delete S.res[p][old];
+    S.res[p][S.pick] = S.me;
+    toast(old ? `${plabel(p)}: ${old}에서 ${S.pick}(으)로 변경했습니다.` : `${plabel(p)} ${S.pick} 좌석을 예약했습니다.`);
+    S.pick = null; return render();
+  }
+  if (act === "cancel") {
+    const p = S.period, old = seatOf(p, S.me);
+    if (bookState(p) !== "open") { toast(`${plabel(p)} 예약 가능 시간이 아닙니다.`); return render(); }
+    delete S.res[p][old]; toast(`${plabel(p)} ${old} 예약을 취소했습니다.`); return render();
+  }
+  if (act === "fillIn") {
+    const p = S.profPeriod, k = d.k;
+    const ch = S.checks[p][k];
+    const list = Object.keys(S.res[p]).filter(s => !ch[s]);
+    list.forEach(s => ch[s] = "in");
+    const outs = Object.keys(S.res[p]).filter(s => ch[s] === "out");
+    addLog(p, `${roundName(k)} 확인 완료: 착석 ${Object.keys(S.res[p]).length - outs.length}명, 빈자리 ${outs.length}명${outs.length ? " (" + outs.join(", ") + ")" : ""}`);
+    toast(`${roundName(k)} 확인: ${list.length}명을 착석 처리했습니다.`); return render();
+  }
+  if (act === "clearRound") { const p = S.profPeriod; S.checks[p] = { start: {}, end: {} }; addLog(p, "시작·마감 확인 기록을 비우고 다시 시작"); return render(); }
+  if (act === "assign") {
+    const p = S.profPeriod, id = $("#assignWho").value, seat = S.profPick;
+    S.res[p][seat] = id; S.checks[p].start[seat] = "in";
+    S.notes[p][id] = [...(S.notes[p][id] || []), "현장 배정"];
+    addLog(p, `${seat} ${student(id).name}: 현장 배정, 착석`);
+    toast(`${student(id).name} 학생을 ${seat}에 배정했습니다.`); return render();
+  }
+  if (act === "move") {
+    const p = S.profPeriod, from = S.profPick, to = $("#moveTo").value, id = S.res[p][from];
+    S.res[p][to] = id; delete S.res[p][from];
+    ROUNDS.forEach(([k]) => { if (S.checks[p][k][from]) { S.checks[p][k][to] = S.checks[p][k][from]; delete S.checks[p][k][from]; } });
+    addLog(p, `${student(id).name}: ${from} → ${to} 자리 이동`);
+    S.profPick = to; toast(`${to}(으)로 옮겼습니다.`); return render();
+  }
+  if (act === "unassign") {
+    const p = S.profPeriod, seat = S.profPick, id = S.res[p][seat];
+    delete S.res[p][seat]; ROUNDS.forEach(([k]) => delete S.checks[p][k][seat]);
+    addLog(p, `${seat} ${student(id).name}: 좌석 배정 해제`); S.profPick = null; return render();
+  }
+  if (act === "reset") {
+    if (LIVE && !confirm(`${DAY} 모든 교시 기록을 예시 데이터로 덮어씁니다. 모든 기기에 반영됩니다. 계속할까요?`)) return;
+    const role = S.role, demo = S.demoReplies; S = seed(); S.role = role; S.demoReplies = demo;
+    if (LIVE) writeAllPeriods();
+    toast("예시 데이터로 채웠습니다."); return render();
+  }
+  if (act === "wipe" && LIVE) {
+    if (!confirm(`${DAY} 모든 교시의 예약과 출석 기록을 지웁니다. 모든 기기에 반영됩니다. 계속할까요?`)) return;
+    PERIODS.forEach(({ n }) => applyPeriod(n, emptyPeriod()));
+    writeAllPeriods(); toast("오늘 데이터를 모두 비웠습니다."); return render();
+  }
+  if (act === "demoToggle" && LIVE) {
+    FB.setDoc(FB.doc(FB.db, "config", "main"), { demoReplies: S.demoReplies === false }, { merge: true }).catch(syncErr);
+    return;
+  }
+});
+
+// 교수 출석 체크: 우클릭(휴대폰은 길게 누르기) = 빈자리
+document.addEventListener("contextmenu", e => {
+  const el = e.target.closest("[data-pseat]");
+  if (!el || !S.quick || S.role !== "prof") return;
+  const p = S.profPeriod, seat = el.dataset.pseat;
+  if (!S.res[p][seat]) return;
+  e.preventDefault();
+  cycleCheck(p, seat, "out"); S.profPick = null; render();
+});
+document.addEventListener("submit", e => {
+  if (e.target.id === "codeForm") {
+    e.preventDefault();
+    const p = +e.target.dataset.p, k = e.target.dataset.k, ss = sess(p, k), v = $("#codeIn").value.trim();
+    if (!live(ss)) { toast("입력 시간이 지났습니다."); return render(); }
+    if (v !== ss.code) return toast("코드가 맞지 않습니다. 강의실 화면을 다시 확인하세요.");
+    markDone(p, k, ss, S.me);
+    addLog(p, `${student(S.me).name}: ${roundName(k)} 출결 코드 입력`);
+    toast(`${plabel(p)} ${roundName(k)} 출결이 확인되었습니다.`);
+    return render();
+  }
+  if (e.target.id !== "loginForm") return;
+  e.preventDefault();
+  const v = $("#sid").value.trim();
+  const err = $("#loginErr");
+  if (!/^\d{8}$/.test(v)) { err.textContent = "학번 8자리를 숫자로 입력하세요."; err.hidden = false; return; }
+  if (!S.students.find(s => s.id === v)) { err.textContent = "등록된 명단에 없는 학번입니다. 학번을 확인하거나 교수님께 문의하세요."; err.hidden = false; return; }
+  S.me = v; S.pick = null; render();
+});
+document.addEventListener("change", e => {
+  if (e.target.id === "profPeriod") { S.profPeriod = +e.target.value; S.profPick = null; render(); }
+  if (e.target.id === "adminPeriod") { S.adminPeriod = +e.target.value; render(); }
+  if (e.target.id === "simTime") { setSim(e.target.value); S.pick = null; S.period = null; render(); }
+});
+// 실제 시각 사용 중이면 1분마다 예약 가능 상태를 갱신
+// 시각이 흐르면 예약 가능 상태와 자동 출결을 갱신 (입력 중에는 건너뜀)
+let lastMin = nowMin();
+setInterval(() => {
+  const m = nowMin();
+  if (m === lastMin || document.querySelector("input:focus, select:focus")) return;
+  lastMin = m; render();
+}, 5000);
+render();
+// PWA: 오프라인용 서비스 워커 등록 (https 또는 localhost에서만 동작)
+if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
+</script>
+<script type="module">
+// Firebase 연결 (불러오지 못하면 이 기기 저장 모드로 계속 동작)
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getFirestore, collection, doc, onSnapshot, setDoc, updateDoc, deleteField, arrayUnion, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+const firebaseConfig = {
+  apiKey: "AIzaSyAqkc5vX8h-EZIxe14TrUKjaLHtWYc2i9s",
+  authDomain: "seat-pwa.firebaseapp.com",
+  projectId: "seat-pwa",
+  storageBucket: "seat-pwa.firebasestorage.app",
+  messagingSenderId: "530100325433",
+  appId: "1:530100325433:web:5810499b6074e36104d1e8"
+};
+const db = getFirestore(initializeApp(firebaseConfig));
+window.FB = { db, collection, doc, onSnapshot, setDoc, updateDoc, deleteField, arrayUnion, runTransaction };
+window.startSync();
+</script>
+</body>
+</html>
