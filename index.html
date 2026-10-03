@@ -240,6 +240,7 @@ td.mono { font-size: 13px; }
 <div class="toast" id="toast" hidden></div>
 
 <script>
+const APP_VERSION = "v4"; // sw.js의 VERSION과 같이 올림. 화면 맨 아래에 표시되어 어느 버전인지 확인할 수 있음
 const ROOM = "I423호";
 const ROWS = ["A","B","C","D","E","F"];
 const COLS = [1,2,3,4,5,6,7,8];
@@ -799,7 +800,7 @@ function render() {
   document.querySelectorAll("[data-role]").forEach(b => b.setAttribute("aria-pressed", b.dataset.role === S.role));
   headerState();
   if (FB_MODE && !USER) {
-    $("#app").innerHTML = AUTHED ? renderAuth() : `<p class="sub" style="text-align:center;margin:40px 0">불러오는 중…</p>`;
+    $("#app").innerHTML = AUTHED ? renderAuth() + `<p class="sub mono" style="text-align:center">${APP_VERSION}</p>` : `<p class="sub" style="text-align:center;margin:40px 0">불러오는 중…</p>`;
     return;
   }
   syncAuto();
@@ -808,7 +809,7 @@ function render() {
     ? `<span><span class="pill done">실시간 연결됨</span> ${DAY} 기록을 모든 기기가 함께 봅니다.</span>`
     : FB_MODE ? `<span>실시간 저장소에 연결하는 중…</span>`
     : `<span>오프라인 시연: 변경 내용은 이 기기에만 저장됩니다. 이름과 학번은 가상의 값입니다.</span><button class="btn quiet" type="button" data-act="reset">예시 데이터로 되돌리기</button>`;
-  $("#app").innerHTML = clockBar() + body + `<div class="foot">${foot}</div>` + (S.role === "prof" ? codeScreen() : "");
+  $("#app").innerHTML = clockBar() + body + `<div class="foot">${foot}<span class="sub mono">${APP_VERSION}</span></div>` + (S.role === "prof" ? codeScreen() : "");
   save();
   pushChanges();
 }
