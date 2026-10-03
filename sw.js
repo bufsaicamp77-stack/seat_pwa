@@ -1,6 +1,6 @@
 // 앱 화면을 기기에 저장해 두어 인터넷이 끊겨도 열리게 합니다.
 // 페이지를 고친 뒤에는 VERSION 숫자를 올려야 사용자 기기에 새 버전이 반영됩니다.
-const VERSION = "v2";
+const VERSION = "v3";
 const CACHE = "seat-pwa-" + VERSION;
 const SHELL = [
   "./",

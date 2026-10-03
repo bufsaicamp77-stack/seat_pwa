@@ -121,6 +121,10 @@ main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; display: grid
 .stat.late b { color: var(--late); }
 .openbar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
 .openbar.on { border-color: var(--ok); background: var(--ok-soft); }
+.who { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--head-ink); }
+.who:empty { display: none; }
+.who .btn { padding: 5px 10px; font-size: 13px; }
+.login .seg { justify-self: start; }
 
 .esync { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--brand); border-radius: 10px; padding: 12px 14px; display: grid; gap: 8px; font-size: 14px; }
 .esync.off { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; border-left-color: var(--line); color: var(--muted); }
@@ -303,11 +307,23 @@ try { S = JSON.parse(localStorage.getItem(KEY)) || seed(); } catch (e) { S = see
 S.forceOpen = S.forceOpen || {};
 S.auto = S.auto || {};
 S.autoOff = S.autoOff || {};
+S.secret = {}; S.submitted = {}; S.staffList = [];
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+
+// 로그인 (Firebase 연결 시). FB_MODE가 아니면 예전처럼 이 기기에서만 동작하는 시연 모드
+const ADMIN_EMAIL = "bufsaicamp77@gmail.com";
+const STUDENT_DOMAIN = "student.seat-pwa.app";
+const sidEmail = id => id + "@" + STUDENT_DOMAIN;
+// 온라인이면 Firebase를 기다리고(불러오는 중 표시), 6초 안에 못 불러오면 오프라인 시연으로 전환
+let FB_MODE = navigator.onLine !== false, AUTHED = false, USER = null, LIVE = false;
+setTimeout(() => { if (!window.FB && FB_MODE) { FB_MODE = false; render(); } }, 6000);
+const isStaffUser = () => !!USER && USER.kind === "staff";
+const isStudentUser = () => !!USER && USER.kind === "student";
+const canWrite = () => !FB_MODE || isStaffUser(); // 교수·관리자 기기만 공용 기록을 고침
 
 const $ = s => document.querySelector(s);
 const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const student = id => S.students.find(s => s.id === id);
+const student = id => S.students.find(s => s.id === id) || { id, name: id, dept: "명단에 없음", consent: false };
 const seatOf = (p, id) => Object.keys(S.res[p]).find(k => S.res[p][k] === id) || null;
 const realMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
 // 시험 시각도 실제 시간처럼 흘러감 (설정한 순간부터 경과한 분을 더함)
@@ -373,6 +389,18 @@ const WIN = 5; // 코드 입력 가능 시간(분)
 const autoAt = (p, k) => k === "start" ? period(p).start : period(p).end; // 1교시: 09:00, 09:50
 const sess = (p, k) => (S.auto[p] || {})[k] || null;
 const live = ss => ss && !ss.closed && nowMin() < ss.t0 + WIN;
+// 실시간 모드에서는 코드를 교수 전용 문서(secrets)에만 두어 학생 기기에 보이지 않게 함
+const codeOf = (p, k) => LIVE ? (((S.secret[p] || {})[k] || {}).code || "····") : (sess(p, k) || {}).code;
+function ensureSecret(p, k, t0) {
+  const ref = FB.doc(FB.db, "days", DAY, "secrets", String(p));
+  FB.runTransaction(FB.db, async tx => {
+    const snap = await tx.get(ref);
+    if (snap.exists() && snap.data()[k]) return;
+    const code = String(1000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 9000));
+    const until = FB.Timestamp.fromMillis(Date.now() + (t0 + WIN - nowMin()) * 60000);
+    tx.set(ref, { [k]: { code, until } }, { merge: true });
+  }).catch(syncErr);
+}
 function markDone(p, k, ss, id) {
   ss.done[id] = true;
   const seat = seatOf(p, id);
@@ -380,6 +408,14 @@ function markDone(p, k, ss, id) {
   else if (!ss.unseated.includes(id)) ss.unseated.push(id);
 }
 function syncAuto() {
+  if (!canWrite() || (FB_MODE && !LIVE)) return;
+  (S.codesList || []).forEach(c => {
+    const ss = sess(c.p, c.k);
+    if (!ss || ss.done[c.sid]) return;
+    markDone(c.p, c.k, ss, c.sid);
+    const at = c.at && c.at.toDate ? c.at.toDate() : new Date();
+    S.log[c.p].push({ t: pad(at.getHours()) + ":" + pad(at.getMinutes()), m: `${student(c.sid).name}: ${roundName(c.k)} 출결 코드 입력` });
+  });
   const m = nowMin();
   PERIODS.forEach(({ n: p }) => {
     if (S.autoOff[p]) return;
@@ -391,13 +427,14 @@ function syncAuto() {
         if (m < t0 || m >= t0 + WIN) return;
         // 코드와 예시 응답은 날짜·교시로 정해지는 값이라, 여러 기기가 동시에 열어도 같은 결과가 됩니다
         const seedKey = DAY + "|" + p + "|" + k;
-        ss = S.auto[p][k] = { code: String(1000 + Math.floor(hash01(seedKey + "|code") * 9000)), t0, delays: {}, done: {}, unseated: [], closed: false };
+        ss = S.auto[p][k] = { t0, delays: {}, done: {}, unseated: [], closed: false };
+        if (LIVE) ensureSecret(p, k, t0); else ss.code = String(1000 + Math.floor(hash01(seedKey + "|code") * 9000));
         if (S.demoReplies !== false) S.students.forEach(s => {
           if (s.id === TEST_ID) return; // 시험용 학생은 직접 입력
           const r = hash01(seedKey + "|" + s.id);
           if (seatOf(p, s.id) ? r < 0.88 : r < 0.07) ss.delays[s.id] = Math.floor(hash01(seedKey + "|d|" + s.id) * WIN);
         });
-        S.log[p].push({ t: hm(t0), m: `${l} 출결 자동 시작 · 수강생 ${S.students.length}명에게 알림톡 발송 · 코드 ${ss.code}` });
+        S.log[p].push({ t: hm(t0), m: `${l} 출결 자동 시작 · 수강생 ${S.students.length}명에게 알림톡 발송` });
       }
       if (ss.closed) return;
       const el = m - ss.t0;
@@ -420,7 +457,7 @@ function autoBar(p) {
     let st;
     if (live(ss)) {
       const seated = Object.keys(S.res[p]).length, inN = Object.keys(S.res[p]).filter(seat => ss.done[S.res[p][seat]]).length;
-      st = `<span class="pill live">진행 중</span> 코드 <b class="mono code-sm">${ss.code}</b> · ${hm(ss.t0 + WIN)}까지 · 예약자 ${inN}/${seated}명 입력
+      st = `<span class="pill live">진행 중</span> 코드 <b class="mono code-sm">${codeOf(p, k)}</b> · ${hm(ss.t0 + WIN)}까지 · 예약자 ${inN}/${seated}명 입력
         <button class="btn primary" type="button" data-act="showCode" data-k="${k}">강의실 화면에 띄우기</button>`;
     } else if (ss) st = `<span class="pill done">완료</span> 코드 입력 ${Object.keys(ss.done).length}명`;
     else if (m < t0) st = `<span class="pill">대기</span> ${hm(t0)} 자동 발송`;
@@ -442,7 +479,7 @@ function codeScreen() {
   if (!live(ss)) { S.showCode = null; return ""; }
   return `<div class="codescreen" role="dialog" aria-label="출결 코드">
     <div class="eyebrow">${ROOM} · ${plabel(sc.p)} ${roundName(sc.k)} 출결</div>
-    <div class="bigcode mono">${ss.code}</div>
+    <div class="bigcode mono">${codeOf(sc.p, sc.k)}</div>
     <p>알림톡으로 받은 입력란에 위 코드를 입력하세요 · ${hm(ss.t0 + WIN)}까지</p>
     <button class="btn" type="button" data-act="hideCode">닫기</button></div>`;
 }
@@ -451,10 +488,11 @@ function studentAlert() {
     const ss = sess(p, k);
     if (!live(ss)) continue;
     if (ss.done[S.me]) return `<div class="alimtalk done"><b>알림톡</b> ${plabel(p)} ${l} 출결 코드 입력 완료${seatOf(p, S.me) ? ` · 좌석 ${seatOf(p, S.me)} 착석으로 기록` : " · 좌석 예약이 없어 교수님이 자리를 확인합니다"}</div>`;
+    if (S.submitted[p + "_" + k]) return `<div class="alimtalk done"><b>알림톡</b> ${plabel(p)} ${l} 출결 코드를 제출했습니다 · 교수 화면에서 확인되면 착석으로 기록됩니다</div>`;
     return `<form class="alimtalk" id="codeForm" data-p="${p}" data-k="${k}">
       <div><b>알림톡 · 출결 체크</b><div class="sub">${ROOM} ${plabel(p)} ${l} 출결이 시작되었습니다. 강의실 화면의 코드를 ${hm(ss.t0 + WIN)}까지 입력하세요.</div></div>
       <div class="row" style="flex-wrap:nowrap"><input id="codeIn" class="mono" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="코드 4자리" aria-label="출결 코드"><button class="btn primary" type="submit">입력</button></div>
-      <div class="hint">시연: 교수 탭의 전자출결 연동 칸에 코드가 보입니다.</div></form>`;
+      ${FB_MODE ? "" : `<div class="hint">시연: 교수 탭의 전자출결 연동 칸에 코드가 보입니다.</div>`}</form>`;
   }
   return "";
 }
@@ -516,7 +554,7 @@ function renderStudent() {
       <p class="note">스마트폰 사용이 어렵거나 예약을 놓쳤다면 수업 시간에 교수님이 현장에서 자리를 배정합니다.</p>`;
   }
   return studentAlert() + `<div class="lead"><div><div class="eyebrow mono">${S.me} · ${esc(me.dept)}</div><h2>${esc(me.name)}님, 교시를 고르세요</h2></div>
-      <button class="btn quiet" type="button" data-act="logout">다른 학번으로 확인</button></div>
+      <button class="btn quiet" type="button" data-act="logout">${FB_MODE ? "로그아웃" : "다른 학번으로 확인"}</button></div>
     <div class="periods">${cards}</div>
     <div class="work">
       <section class="room">
@@ -662,9 +700,27 @@ function renderAdmin() {
     return `<div class="seat ${who ? "taken" : ""} ${late ? "late" : ""}" style="cursor:default">${late ? `<span class="late-badge">지각</span>` : ""}<span class="code">${seat}</span>${who ? `<span class="nm">${esc(given(student(who).name))}</span>` : ""}</div>`;
   });
   const rows = S.students.map(s => { const st = seatOf(p, s.id), late = (S.notes[p][s.id] || []).includes("지각");
-    return `<tr><td class="mono">${s.id}</td><td>${esc(s.name)}${late ? ' <span class="tag late">지각</span>' : ""}</td><td>${esc(s.dept)}</td><td>${s.consent ? "동의" : '<span style="color:var(--bad)">미동의</span>'}</td><td class="mono">${st || "–"}</td></tr>`; }).join("");
+    return `<tr><td class="mono">${s.id}</td><td>${esc(s.name)}${late ? ' <span class="tag late">지각</span>' : ""}</td><td>${esc(s.dept)}</td><td>${s.consent ? "동의" : '<span style="color:var(--bad)">미동의</span>'}</td><td class="mono">${st || "–"}</td>${LIVE ? `<td><button class="btn quiet" type="button" data-delsid="${s.id}" aria-label="${esc(s.name)} 명단에서 삭제">삭제</button></td>` : ""}</tr>`; }).join("");
   const consentN = S.students.filter(s => s.consent).length;
   const summary = PERIODS.map(x => `<tr><td>${plabel(x.n)}</td><td class="mono">${ptime(x.n)}</td><td class="mono">${hm(openAt(x.n))}–${hm(x.start)}</td><td class="mono">${Object.keys(S.res[x.n]).length} / ${ROWS.length * COLS.length}</td></tr>`).join("");
+  const isAdmin = USER && USER.isAdmin;
+  const manage = LIVE ? `<hr>
+    <div><div class="eyebrow">명단 관리</div><h3>학생 추가</h3></div>
+    <form id="addStu" class="row" style="align-items:end">
+      <input id="newSid" class="mono" inputmode="numeric" maxlength="8" placeholder="학번 8자리" aria-label="학번" style="width:120px">
+      <input id="newName" placeholder="이름" aria-label="이름" style="width:100px">
+      <input id="newDept" placeholder="학과" aria-label="학과" style="width:130px">
+      <button class="btn" type="submit">추가</button></form>
+    <div class="row"><button class="btn" type="button" data-act="seedRoster">예시 명단 ${NAMES.length}명 등록</button></div>
+    <p class="sub">명단에 있는 학번만 가입할 수 있습니다. 학생이 비밀번호를 잊었거나 다른 사람이 먼저 가입했다면 Firebase 콘솔 → Authentication → 사용자에서 <span class="mono">학번@${STUDENT_DOMAIN}</span> 계정을 삭제한 뒤 다시 가입하게 하세요.</p>
+    ${isAdmin ? `<hr><div><div class="eyebrow">교수 계정</div><h3>교수 추가 (관리자 전용)</h3></div>
+    <p class="sub">먼저 Firebase 콘솔 → Authentication에서 교수 이메일 계정을 만든 뒤, 같은 이메일을 여기에 등록하세요.</p>
+    <form id="addStaff" class="row"><input id="newStaff" type="email" placeholder="교수 이메일" aria-label="교수 이메일" style="width:220px"><button class="btn" type="submit">등록</button></form>
+    <ul class="log">${[ADMIN_EMAIL + " (관리자)", ...S.staffList].map((m, i) => `<li><time></time><span>${esc(m)} ${i ? `<button class="btn quiet" type="button" data-delstaff="${esc(m)}">삭제</button>` : ""}</span></li>`).join("")}</ul>` : ""}
+    <hr><div><div class="eyebrow">공용 데이터 (${DAY})</div><h3>실시간 저장소 관리</h3></div>
+    <div class="row"><button class="btn" type="button" data-act="demoToggle" aria-pressed="${S.demoReplies !== false}">예시 학생 자동 응답: ${S.demoReplies !== false ? "켜짐" : "꺼짐"}</button></div>
+    <p class="sub">켜 두면 전자출결 시연 때 예시 학생들이 코드를 입력한 것처럼 기록됩니다. 실제 시험 운영 때는 꺼 주세요.</p>
+    <div class="row"><button class="btn" type="button" data-act="reset">오늘 데이터를 예시로 채우기</button><button class="btn" type="button" data-act="wipe">오늘 데이터 모두 비우기</button></div>` : "";
   return `<div class="lead"><div><div class="eyebrow">관리자 · 강의실과 명단 관리</div><h2>${ROOM}</h2><p>좌석 ${ROWS.length * COLS.length}석 (${ROWS.length}열 × ${COLS.length}석) · 하루 10교시</p></div>
       ${periodSelect("adminPeriod", p)}</div>
     <div class="work">
@@ -675,38 +731,97 @@ function renderAdmin() {
       </section>
       <aside class="panel">
         <div><div class="eyebrow">학생 명단</div><h3>${S.students.length}명 · 시험 운영 동의 ${consentN}명</h3></div>
-        <p class="note">초기 시제품은 동의한 학생 명단만 등록해 시험 운영합니다. 오른쪽 열은 ${plabel(p)} 좌석입니다.</p>
-        ${LIVE ? `<hr><div><div class="eyebrow">공용 데이터 (${DAY})</div><h3>실시간 저장소 관리</h3></div>
-        <div class="row"><button class="btn" type="button" data-act="demoToggle" aria-pressed="${S.demoReplies !== false}">예시 학생 자동 응답: ${S.demoReplies !== false ? "켜짐" : "꺼짐"}</button></div>
-        <p class="sub">켜 두면 전자출결 시연 때 예시 학생들이 코드를 입력한 것처럼 기록됩니다. 실제 시험 운영 때는 꺼 주세요.</p>
-        <div class="row"><button class="btn" type="button" data-act="reset">오늘 데이터를 예시로 채우기</button><button class="btn" type="button" data-act="wipe">오늘 데이터 모두 비우기</button></div>` : ""}
-        <div class="tbl"><table><thead><tr><th>학번</th><th>이름</th><th>학과</th><th>동의</th><th>좌석</th></tr></thead><tbody>${rows}</tbody></table></div>
+        <p class="note">초기 시제품은 동의한 학생 명단만 등록해 시험 운영합니다. 좌석 열은 ${plabel(p)} 좌석입니다.</p>
+        <div class="tbl"><table><thead><tr><th>학번</th><th>이름</th><th>학과</th><th>동의</th><th>좌석</th>${LIVE ? "<th></th>" : ""}</tr></thead><tbody>${rows || `<tr><td colspan="6" class="sub">등록된 학생이 없습니다.</td></tr>`}</tbody></table></div>
+        ${manage}
       </aside>
     </div>`;
 }
 
+/* ---------- 로그인 화면 (Firebase 연결 시) ---------- */
+function renderAuth() {
+  const tab = S.authTab || "student", signup = S.authMode === "signup";
+  const tabs = `<div class="seg" role="group" aria-label="로그인 종류"><button type="button" data-authtab="student" aria-pressed="${tab === "student"}">학생</button><button type="button" data-authtab="staff" aria-pressed="${tab === "staff"}">교수·관리자</button></div>`;
+  if (tab === "staff") return `<section class="login">${tabs}
+    <div><div class="eyebrow">교수·관리자</div><h2>이메일로 로그인</h2></div>
+    <form id="staffLogin" class="field">
+      <label for="stEmail">이메일</label><input id="stEmail" type="email" autocomplete="username">
+      <label for="stPw">비밀번호</label><input id="stPw" type="password" autocomplete="current-password">
+      <div class="err" id="authErr" hidden></div>
+      <button class="btn primary" type="submit" style="margin-top:6px">로그인</button></form>
+    <p class="hint">교수 계정은 관리자가 등록합니다.</p></section>`;
+  return `<section class="login">${tabs}
+    <div><div class="eyebrow">학생</div><h2>${signup ? "처음 사용 · 가입하기" : "학번으로 로그인"}</h2></div>
+    ${signup ? `<p class="note warn"><b>학교 포털 비밀번호를 쓰지 마세요.</b> 이 앱에서만 쓰는 새 비밀번호(6자 이상)를 만드세요.</p>` : ""}
+    <form id="${signup ? "stuSignup" : "stuLogin"}" class="field">
+      <label for="auSid">학번</label><input id="auSid" class="mono" inputmode="numeric" maxlength="8" autocomplete="username" placeholder="예: 20231047">
+      <label for="auPw">${signup ? "새 비밀번호" : "비밀번호"}</label><input id="auPw" type="password" autocomplete="${signup ? "new-password" : "current-password"}">
+      ${signup ? `<label for="auPw2">비밀번호 확인</label><input id="auPw2" type="password" autocomplete="new-password">` : ""}
+      <div class="err" id="authErr" hidden></div>
+      <button class="btn primary" type="submit" style="margin-top:6px">${signup ? "가입하고 시작하기" : "로그인"}</button></form>
+    <p class="hint">${signup ? `이미 가입했나요? <button type="button" data-authmode="login">로그인</button>` : `처음이라면 <button type="button" data-authmode="signup">가입하기</button> · 비밀번호를 잊었다면 교수님께 계정 초기화를 요청하세요.`}</p></section>`;
+}
+function authError(e) {
+  const c = (e && e.code) || "";
+  const msg = {
+    "auth/invalid-credential": "학번(이메일) 또는 비밀번호가 맞지 않습니다.",
+    "auth/wrong-password": "비밀번호가 맞지 않습니다.",
+    "auth/user-not-found": "가입되지 않은 계정입니다. 학생이라면 먼저 가입하세요.",
+    "auth/email-already-in-use": "이미 가입된 학번입니다. 본인이 가입한 적이 없다면 교수님께 계정 초기화를 요청하세요.",
+    "auth/weak-password": "비밀번호는 6자 이상이어야 합니다.",
+    "auth/invalid-email": "형식이 올바르지 않습니다.",
+    "auth/too-many-requests": "시도가 너무 많습니다. 잠시 뒤 다시 시도하세요.",
+    "auth/network-request-failed": "인터넷 연결을 확인하세요."
+  }[c] || (e && e.message) || String(e);
+  const el = $("#authErr");
+  if (el) { el.textContent = msg; el.hidden = false; } else toast(msg);
+}
+
+function headerState() {
+  const seg = document.querySelector(".top .seg");
+  let who = $("#who");
+  if (!who) { who = document.createElement("div"); who.id = "who"; who.className = "who"; document.querySelector(".top-in").appendChild(who); }
+  if (!FB_MODE) { seg.hidden = false; who.innerHTML = ""; return; }
+  seg.hidden = !isStaffUser();
+  seg.querySelector('[data-role="student"]').hidden = true;
+  who.innerHTML = USER ? `<span>${esc(USER.kind === "student" ? student(USER.sid).name + " · " + USER.sid : USER.email)}</span><button class="btn" type="button" data-act="signout">로그아웃</button>` : "";
+}
+
 function render() {
+  if (FB_MODE && isStudentUser()) { S.role = "student"; S.me = USER.sid; }
+  if (FB_MODE && isStaffUser() && S.role === "student") S.role = "prof";
   document.querySelectorAll("[data-role]").forEach(b => b.setAttribute("aria-pressed", b.dataset.role === S.role));
+  headerState();
+  if (FB_MODE && !USER) {
+    $("#app").innerHTML = AUTHED ? renderAuth() : `<p class="sub" style="text-align:center;margin:40px 0">불러오는 중…</p>`;
+    return;
+  }
   syncAuto();
   const body = S.role === "student" ? renderStudent() : S.role === "prof" ? renderProf() : renderAdmin();
   const foot = LIVE
-    ? `<span><span class="pill done">실시간 연결됨</span> ${DAY} 기록을 모든 기기가 함께 봅니다. 이름과 학번은 가상의 값입니다.</span>`
-    : `<span>${window.FB ? "실시간 저장소에 연결하는 중… " : "오프라인: "}변경 내용은 이 기기에만 저장됩니다. 이름과 학번은 가상의 값입니다.</span><button class="btn quiet" type="button" data-act="reset">예시 데이터로 되돌리기</button>`;
+    ? `<span><span class="pill done">실시간 연결됨</span> ${DAY} 기록을 모든 기기가 함께 봅니다.</span>`
+    : FB_MODE ? `<span>실시간 저장소에 연결하는 중…</span>`
+    : `<span>오프라인 시연: 변경 내용은 이 기기에만 저장됩니다. 이름과 학번은 가상의 값입니다.</span><button class="btn quiet" type="button" data-act="reset">예시 데이터로 되돌리기</button>`;
   $("#app").innerHTML = clockBar() + body + `<div class="foot">${foot}</div>` + (S.role === "prof" ? codeScreen() : "");
   save();
   pushChanges();
 }
 
 /* ---------- Firebase 실시간 저장 ----------
-   days/{날짜}/periods/{교시} 문서 하나에 그 교시의 예약·출석·기록을 담습니다.
-   화면은 지금처럼 S를 고치고 render()하면, 바뀐 부분만 골라 저장소에 보냅니다. */
-let LIVE = false;
+   days/{날짜}/periods/{교시}: 출석·지각·기록 등 (교수·관리자만 수정)
+   days/{날짜}/res/{교시_좌석}, mine/{교시_학번}: 좌석 예약 (학생은 자기 것만, 보안 규칙이 검사)
+   days/{날짜}/secrets/{교시}: 출결 코드 (교수·관리자만 읽기)
+   days/{날짜}/codes/{교시_시점_학번}: 학생이 낸 코드 (보안 규칙이 정답·시간을 검사)
+   roster/{학번}, staff/{이메일}, config/main */
 const known = {}, synced = {};
+let syncedRes = {}, unsubs = [];
 const clone = o => JSON.parse(JSON.stringify(o));
-const emptyPeriod = () => ({ res: {}, checks: { start: {}, end: {} }, notes: {}, log: [], forceOpen: false, autoOff: false, auto: {} });
+const emptyPeriod = () => ({ checks: { start: {}, end: {} }, notes: {}, log: [], forceOpen: false, autoOff: false, auto: {} });
 const pref = n => FB.doc(FB.db, "days", DAY, "periods", String(n));
-const periodData = n => ({ res: S.res[n], checks: S.checks[n], notes: S.notes[n], log: S.log[n], forceOpen: !!S.forceOpen[n], autoOff: !!S.autoOff[n], auto: S.auto[n] || {} });
-function syncErr(e) { console.error(e); toast("저장소 오류: " + (e && (e.code || e.message) || e)); }
+const resRef = (p, seat) => FB.doc(FB.db, "days", DAY, "res", p + "_" + seat);
+const mineRef = (p, sid) => FB.doc(FB.db, "days", DAY, "mine", p + "_" + sid);
+const periodData = n => ({ checks: S.checks[n], notes: S.notes[n], log: S.log[n], forceOpen: !!S.forceOpen[n], autoOff: !!S.autoOff[n], auto: S.auto[n] || {} });
+function syncErr(e) { console.error(e); toast(e && e.code === "permission-denied" ? "권한이 없습니다. 로그인 상태나 보안 규칙을 확인하세요." : "저장소 오류: " + (e && (e.code || e.message) || e)); }
 function flat(o, pre, out) {
   for (const [k, v] of Object.entries(o || {})) {
     const path = pre ? pre + "." + k : k;
@@ -715,7 +830,6 @@ function flat(o, pre, out) {
   return out;
 }
 function applyPeriod(n, d) {
-  S.res[n] = d.res || {};
   S.checks[n] = { start: (d.checks || {}).start || {}, end: (d.checks || {}).end || {} };
   S.notes[n] = d.notes || {};
   S.log[n] = d.log || [];
@@ -725,7 +839,7 @@ function applyPeriod(n, d) {
   synced[n] = clone(periodData(n));
 }
 function pushChanges() {
-  if (!LIVE) return;
+  if (!LIVE || !isStaffUser()) return;
   PERIODS.forEach(({ n }) => {
     const cur = clone(periodData(n));
     if (!known[n]) {
@@ -746,48 +860,135 @@ function pushChanges() {
     synced[n] = cur;
     FB.updateDoc(pref(n), up).catch(syncErr);
   });
+  pushRes();
 }
-// 좌석 예약은 두 학생이 동시에 같은 자리를 누를 수 있어 트랜잭션으로 확인 후 저장
-function fbReserve(n, seat, me) {
-  return FB.runTransaction(FB.db, async tx => {
-    const ref = pref(n), snap = await tx.get(ref);
-    const d = snap.exists() ? snap.data() : emptyPeriod();
-    const res = d.res || {};
-    if (res[seat] && res[seat] !== me) return { taken: true };
-    const old = Object.keys(res).find(k => res[k] === me) || null;
-    if (!snap.exists()) tx.set(ref, { ...emptyPeriod(), res: { [seat]: me } });
-    else {
-      const up = { ["res." + seat]: me };
-      if (old && old !== seat) up["res." + old] = FB.deleteField();
-      tx.update(ref, up);
+// 교수·관리자가 바꾼 좌석 배정(현장 배정, 이동, 해제, 예시 채우기)을 예약 문서로 반영
+function pushRes() {
+  const batch = FB.writeBatch(FB.db);
+  let ops = 0;
+  PERIODS.forEach(({ n: p }) => {
+    const a = syncedRes[p] || {}, b = S.res[p] || {};
+    for (const seat in a) if (b[seat] !== a[seat]) {
+      batch.delete(resRef(p, seat)); ops++;
+      if (!Object.values(b).includes(a[seat])) { batch.delete(mineRef(p, a[seat])); ops++; }
     }
-    return { old };
+    for (const seat in b) if (a[seat] !== b[seat]) {
+      batch.set(resRef(p, seat), { p, seat, sid: b[seat] });
+      batch.set(mineRef(p, b[seat]), { p, seat, sid: b[seat] }); ops += 2;
+    }
   });
+  if (!ops) return;
+  syncedRes = clone(S.res);
+  batch.commit().catch(syncErr);
+}
+// 학생 본인 예약·변경·취소: 보안 규칙이 "빈자리인지, 본인 것인지"를 서버에서 확인
+function studentReserve(p, seat) {
+  const sid = S.me, old = seatOf(p, sid), batch = FB.writeBatch(FB.db);
+  if (old) batch.delete(resRef(p, old));
+  batch.set(resRef(p, seat), { p, seat, sid });
+  batch.set(mineRef(p, sid), { p, seat, sid });
+  return batch.commit().then(() => ({ old }), e => { if (e.code === "permission-denied") return { taken: true }; throw e; });
+}
+function studentCancel(p) {
+  const sid = S.me, old = seatOf(p, sid), batch = FB.writeBatch(FB.db);
+  batch.delete(resRef(p, old));
+  batch.delete(mineRef(p, sid));
+  return batch.commit().then(() => old);
 }
 function writeAllPeriods() {
   PERIODS.forEach(({ n }) => { const cur = clone(periodData(n)); known[n] = true; synced[n] = cur; FB.setDoc(pref(n), cur).catch(syncErr); });
+  pushRes();
 }
-window.startSync = function () {
-  FB.onSnapshot(FB.collection(FB.db, "days", DAY, "periods"), snap => {
-    if (!LIVE) { LIVE = true; PERIODS.forEach(({ n }) => applyPeriod(n, emptyPeriod())); }
+function stopSync() { unsubs.forEach(u => u()); unsubs = []; LIVE = false; }
+function startSync() {
+  stopSync();
+  const rerender = () => { if (!document.querySelector("input:focus, select:focus")) render(); };
+  let gotPeriods = false, gotRes = false;
+  const ready = () => { if (gotPeriods && gotRes && !LIVE) { LIVE = true; } if (LIVE) rerender(); };
+  unsubs.push(FB.onSnapshot(FB.collection(FB.db, "days", DAY, "periods"), snap => {
+    if (!gotPeriods) { gotPeriods = true; PERIODS.forEach(({ n }) => { known[n] = false; applyPeriod(n, emptyPeriod()); }); }
     snap.docChanges().forEach(ch => {
       const n = +ch.doc.id;
       if (!period(n)) return;
       if (ch.type === "removed") { known[n] = false; applyPeriod(n, emptyPeriod()); }
       else { known[n] = true; applyPeriod(n, ch.doc.data()); }
     });
-    if (!document.querySelector("input:focus, select:focus")) render();
-  }, err => { syncErr(err); });
-  FB.onSnapshot(FB.doc(FB.db, "config", "main"), d => {
+    ready();
+  }, syncErr));
+  unsubs.push(FB.onSnapshot(FB.collection(FB.db, "days", DAY, "res"), snap => {
+    gotRes = true;
+    PERIODS.forEach(({ n }) => S.res[n] = {});
+    snap.forEach(d => { const r = d.data(); if (period(r.p)) S.res[r.p][r.seat] = r.sid; });
+    syncedRes = clone(S.res);
+    ready();
+  }, syncErr));
+  unsubs.push(FB.onSnapshot(FB.collection(FB.db, "roster"), snap => {
+    S.students = snap.docs.map(d => ({ id: d.id, name: d.data().name || d.id, dept: d.data().dept || "", consent: d.data().consent !== false })).sort((a, b) => a.id.localeCompare(b.id));
+    rerender();
+  }, syncErr));
+  unsubs.push(FB.onSnapshot(FB.doc(FB.db, "config", "main"), d => {
     S.demoReplies = d.exists() ? d.data().demoReplies !== false : true;
-    if (LIVE) render();
-  }, () => {});
+    rerender();
+  }, () => {}));
+  if (isStaffUser()) {
+    unsubs.push(FB.onSnapshot(FB.collection(FB.db, "days", DAY, "secrets"), snap => {
+      S.secret = {}; snap.forEach(d => S.secret[d.id] = d.data()); rerender();
+    }, syncErr));
+    // 학생이 낸 코드(정답만 저장됨) → syncAuto에서 출석으로 반영
+    unsubs.push(FB.onSnapshot(FB.collection(FB.db, "days", DAY, "codes"), snap => {
+      S.codesList = snap.docs.map(d => d.data()); rerender();
+    }, syncErr));
+  }
+  if (USER && USER.isAdmin) unsubs.push(FB.onSnapshot(FB.collection(FB.db, "staff"), snap => { S.staffList = snap.docs.map(d => d.id); rerender(); }, () => {}));
+}
+// Firebase 모듈이 불러와지면 호출됨
+window.onFirebase = function () {
+  FB_MODE = true;
+  render();
+  FB.onAuthStateChanged(FB.auth, async u => {
+    stopSync();
+    USER = null;
+    if (u) {
+      const email = (u.email || "").toLowerCase();
+      try {
+        if (email === ADMIN_EMAIL) USER = { uid: u.uid, email, kind: "staff", isAdmin: true };
+        else if (email.endsWith("@" + STUDENT_DOMAIN)) {
+          const sid = email.split("@")[0];
+          if ((await FB.getDoc(FB.doc(FB.db, "roster", sid))).exists()) USER = { uid: u.uid, email, kind: "student", sid };
+          else { await FB.signOut(FB.auth); AUTHED = true; render(); return authError({ message: "명단에 없는 학번입니다. 교수님께 문의하세요." }); }
+        } else if ((await FB.getDoc(FB.doc(FB.db, "staff", email))).exists()) USER = { uid: u.uid, email, kind: "staff", isAdmin: false };
+        else { await FB.signOut(FB.auth); AUTHED = true; render(); return authError({ message: "등록되지 않은 교수 계정입니다. 관리자에게 등록을 요청하세요." }); }
+      } catch (e) { syncErr(e); }
+    }
+    AUTHED = true;
+    S.pick = null; S.profPick = null; S.submitted = {}; S.secret = {};
+    if (USER) startSync();
+    render();
+  });
 };
 
 document.addEventListener("click", e => {
   const el = e.target.closest("button");
   if (!el) return;
   const d = el.dataset;
+  if (d.authtab) { S.authTab = d.authtab; return render(); }
+  if (d.authmode) { S.authMode = d.authmode; return render(); }
+  if (d.act === "signout" || (d.act === "logout" && FB_MODE)) { FB.signOut(FB.auth); return; }
+  if (d.delsid && isStaffUser()) {
+    if (!confirm(`${student(d.delsid).name}(${d.delsid}) 학생을 명단에서 삭제할까요? 이 학번으로는 더 이상 로그인할 수 없습니다.`)) return;
+    const b = FB.writeBatch(FB.db);
+    b.delete(FB.doc(FB.db, "roster", d.delsid)); b.delete(FB.doc(FB.db, "rosterIds", d.delsid));
+    b.commit().catch(syncErr); return;
+  }
+  if (d.delstaff && USER && USER.isAdmin) { FB.deleteDoc(FB.doc(FB.db, "staff", d.delstaff)).catch(syncErr); return; }
+  if (d.act === "seedRoster" && isStaffUser()) {
+    const b = FB.writeBatch(FB.db);
+    seedStudents().forEach(s => {
+      b.set(FB.doc(FB.db, "roster", s.id), { name: s.name, dept: s.dept, consent: s.consent });
+      b.set(FB.doc(FB.db, "rosterIds", s.id), {});
+    });
+    b.commit().then(() => toast("예시 명단을 등록했습니다."), syncErr); return;
+  }
   if (d.role) { S.role = d.role; S.pick = null; S.profPick = null; return render(); }
   if (d.fill) { $("#sid").value = d.fill; return; }
   if (d.period) { S.period = +d.period; S.pick = null; return render(); }
@@ -832,7 +1033,7 @@ document.addEventListener("click", e => {
     if (bookState(p) !== "open") { S.pick = null; toast(`${plabel(p)} 예약 가능 시간이 아닙니다.`); return render(); }
     if (LIVE) {
       const seat = S.pick; S.pick = null; render();
-      fbReserve(p, seat, S.me).then(r => toast(r.taken ? `${seat}은(는) 방금 다른 학생이 예약했습니다. 다른 자리를 골라 주세요.`
+      studentReserve(p, seat).then(r => toast(r.taken ? `${seat}은(는) 방금 다른 학생이 예약했습니다. 다른 자리를 골라 주세요.`
         : r.old && r.old !== seat ? `${plabel(p)}: ${r.old}에서 ${seat}(으)로 변경했습니다.` : `${plabel(p)} ${seat} 좌석을 예약했습니다.`)).catch(syncErr);
       return;
     }
@@ -845,6 +1046,7 @@ document.addEventListener("click", e => {
   if (act === "cancel") {
     const p = S.period, old = seatOf(p, S.me);
     if (bookState(p) !== "open") { toast(`${plabel(p)} 예약 가능 시간이 아닙니다.`); return render(); }
+    if (LIVE) { studentCancel(p).then(o => toast(`${plabel(p)} ${o} 예약을 취소했습니다.`), syncErr); return; }
     delete S.res[p][old]; toast(`${plabel(p)} ${old} 예약을 취소했습니다.`); return render();
   }
   if (act === "fillIn") {
@@ -878,13 +1080,15 @@ document.addEventListener("click", e => {
   }
   if (act === "reset") {
     if (LIVE && !confirm(`${DAY} 모든 교시 기록을 예시 데이터로 덮어씁니다. 모든 기기에 반영됩니다. 계속할까요?`)) return;
-    const role = S.role, demo = S.demoReplies; S = seed(); S.role = role; S.demoReplies = demo;
+    const keep = { role: S.role, demoReplies: S.demoReplies, students: S.students, secret: S.secret, staffList: S.staffList, submitted: S.submitted, sim: S.sim, simAt: S.simAt };
+    S = seed(); Object.assign(S, keep);
+    if (!LIVE) S.students = seedStudents();
     if (LIVE) writeAllPeriods();
     toast("예시 데이터로 채웠습니다."); return render();
   }
   if (act === "wipe" && LIVE) {
     if (!confirm(`${DAY} 모든 교시의 예약과 출석 기록을 지웁니다. 모든 기기에 반영됩니다. 계속할까요?`)) return;
-    PERIODS.forEach(({ n }) => applyPeriod(n, emptyPeriod()));
+    PERIODS.forEach(({ n }) => { applyPeriod(n, emptyPeriod()); S.res[n] = {}; });
     writeAllPeriods(); toast("오늘 데이터를 모두 비웠습니다."); return render();
   }
   if (act === "demoToggle" && LIVE) {
@@ -907,13 +1111,55 @@ document.addEventListener("submit", e => {
     e.preventDefault();
     const p = +e.target.dataset.p, k = e.target.dataset.k, ss = sess(p, k), v = $("#codeIn").value.trim();
     if (!live(ss)) { toast("입력 시간이 지났습니다."); return render(); }
+    if (LIVE) {
+      // 정답 여부와 입력 시간은 보안 규칙이 서버에서 확인 (학생 기기는 코드를 모름)
+      if (!/^\d{4}$/.test(v)) return toast("코드 4자리를 입력하세요.");
+      FB.setDoc(FB.doc(FB.db, "days", DAY, "codes", p + "_" + k + "_" + S.me), { p, k, sid: S.me, code: v, at: FB.serverTimestamp() })
+        .then(() => { S.submitted[p + "_" + k] = true; toast("코드를 제출했습니다."); render(); },
+              err => toast(err.code === "permission-denied" ? "코드가 맞지 않거나 입력 시간이 지났습니다. 이미 제출했다면 다시 낼 필요가 없습니다." : "제출 실패: " + err.code));
+      return;
+    }
     if (v !== ss.code) return toast("코드가 맞지 않습니다. 강의실 화면을 다시 확인하세요.");
     markDone(p, k, ss, S.me);
     addLog(p, `${student(S.me).name}: ${roundName(k)} 출결 코드 입력`);
     toast(`${plabel(p)} ${roundName(k)} 출결이 확인되었습니다.`);
     return render();
   }
-  if (e.target.id !== "loginForm") return;
+  const id = e.target.id;
+  if (["staffLogin", "stuLogin", "stuSignup", "addStu", "addStaff"].includes(id)) e.preventDefault();
+  if (id === "staffLogin") {
+    FB.signInWithEmailAndPassword(FB.auth, $("#stEmail").value.trim(), $("#stPw").value).catch(authError);
+    return;
+  }
+  if (id === "stuLogin" || id === "stuSignup") {
+    const sid = $("#auSid").value.trim(), pw = $("#auPw").value;
+    if (!/^\d{8}$/.test(sid)) return authError({ message: "학번 8자리를 숫자로 입력하세요." });
+    if (id === "stuLogin") { FB.signInWithEmailAndPassword(FB.auth, sidEmail(sid), pw).catch(authError); return; }
+    if (pw.length < 6) return authError({ code: "auth/weak-password" });
+    if (pw !== $("#auPw2").value) return authError({ message: "비밀번호 확인이 일치하지 않습니다." });
+    FB.getDoc(FB.doc(FB.db, "rosterIds", sid))
+      .then(snap => snap.exists() ? FB.createUserWithEmailAndPassword(FB.auth, sidEmail(sid), pw)
+        : Promise.reject({ message: "명단에 없는 학번입니다. 학번을 확인하거나 교수님께 문의하세요." }))
+      .then(() => { S.authMode = "login"; toast("가입했습니다."); })
+      .catch(authError);
+    return;
+  }
+  if (id === "addStu" && isStaffUser()) {
+    const sid = $("#newSid").value.trim(), name = $("#newName").value.trim(), dept = $("#newDept").value.trim();
+    if (!/^\d{8}$/.test(sid) || !name) return toast("학번 8자리와 이름을 입력하세요.");
+    const b = FB.writeBatch(FB.db);
+    b.set(FB.doc(FB.db, "roster", sid), { name, dept, consent: true });
+    b.set(FB.doc(FB.db, "rosterIds", sid), {});
+    b.commit().then(() => toast(`${name}(${sid}) 학생을 추가했습니다.`), syncErr);
+    return;
+  }
+  if (id === "addStaff" && USER && USER.isAdmin) {
+    const em = $("#newStaff").value.trim().toLowerCase();
+    if (!/^\S+@\S+\.\S+$/.test(em)) return toast("이메일을 확인하세요.");
+    FB.setDoc(FB.doc(FB.db, "staff", em), { addedAt: FB.serverTimestamp() }).then(() => toast(`${em} 교수 계정을 등록했습니다.`), syncErr);
+    return;
+  }
+  if (id !== "loginForm") return;
   e.preventDefault();
   const v = $("#sid").value.trim();
   const err = $("#loginErr");
@@ -943,7 +1189,8 @@ if ("serviceWorker" in navigator && (location.protocol === "https:" || location.
 <script type="module">
 // Firebase 연결 (불러오지 못하면 이 기기 저장 모드로 계속 동작)
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getFirestore, collection, doc, onSnapshot, setDoc, updateDoc, deleteField, arrayUnion, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getFirestore, collection, doc, onSnapshot, getDoc, setDoc, updateDoc, deleteDoc, deleteField, arrayUnion, runTransaction, writeBatch, serverTimestamp, Timestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 const firebaseConfig = {
   apiKey: "AIzaSyAqkc5vX8h-EZIxe14TrUKjaLHtWYc2i9s",
   authDomain: "seat-pwa.firebaseapp.com",
@@ -952,9 +1199,13 @@ const firebaseConfig = {
   messagingSenderId: "530100325433",
   appId: "1:530100325433:web:5810499b6074e36104d1e8"
 };
-const db = getFirestore(initializeApp(firebaseConfig));
-window.FB = { db, collection, doc, onSnapshot, setDoc, updateDoc, deleteField, arrayUnion, runTransaction };
-window.startSync();
+const app = initializeApp(firebaseConfig);
+window.FB = {
+  db: getFirestore(app), auth: getAuth(app),
+  collection, doc, onSnapshot, getDoc, setDoc, updateDoc, deleteDoc, deleteField, arrayUnion, runTransaction, writeBatch, serverTimestamp, Timestamp,
+  onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut
+};
+window.onFirebase();
 </script>
 </body>
 </html>
